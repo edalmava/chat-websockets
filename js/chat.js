@@ -71,18 +71,35 @@ socket.addEventListener('message', (event) => {
             userElement.style.borderLeftColor = color;
             usersList.appendChild(userElement);
         });
-        return; // No mostrar un mensaje de chat para la actualización de la lista de usuarios
+        return;
     }
 
     const messageElement = document.createElement('div');
     const isServerMessage = username === 'Servidor';
+    const isErrorMessage = data.tipo === 'error';
+    const isSystemMessage = data.tipo === 'sistema';
     
-    if (!isServerMessage) {
+    if (isErrorMessage) {
+        // Mensajes de error
+        messageElement.classList.add('error-message');
+        messageElement.innerHTML = `
+            <div class="error-icon">⚠️</div>
+            <div class="error-text">${messageText}</div>
+        `;
+    } else if (isSystemMessage || isServerMessage) {
+        // Mensajes del servidor/sistema
+        messageElement.classList.add('server-message');
+        messageElement.innerHTML = `
+            <div class="system-icon">ℹ️</div>
+            <div class="system-text">${messageText}</div>
+            <div class="message-time">${formatTime(data.timestamp)}</div>
+        `;
+    } else {
+        // Mensajes de usuario
         messageElement.classList.add('user-message');
         const userColor = getUserColor(username);
         messageElement.style.setProperty('--user-color', userColor);
         
-        // Crear estructura con nombre y mensaje
         const usernameElement = document.createElement('div');
         usernameElement.classList.add('username');
         usernameElement.textContent = username;
@@ -94,16 +111,26 @@ socket.addEventListener('message', (event) => {
         
         const timeElement = document.createElement('div');
         timeElement.classList.add('message-time');
-        timeElement.textContent = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        timeElement.textContent = formatTime(data.timestamp);
         
         messageElement.appendChild(usernameElement);
         messageElement.appendChild(textElement);
         messageElement.appendChild(timeElement);
-    } else {
-        messageElement.classList.add('server-message');
-        messageElement.textContent = `* ${messageText} *`;
     }
     
     messages.appendChild(messageElement);
     messages.scrollTop = messages.scrollHeight;
 });
+
+/**
+ * Formatea el timestamp ISO al formato local
+ */
+function formatTime(isoTimestamp) {
+    if (!isoTimestamp) return '';
+    try {
+        const date = new Date(isoTimestamp);
+        return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+        return '';
+    }
+}
