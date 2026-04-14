@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat en Tiempo Real con WebSockets Nativo</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <h1>Chat en Tiempo Real con WebSockets Nativo</h1>
+    
+    <div id="chat-container">
+        <div id="chat-wrapper">
+            <aside id="user-list">
+                <h2>Usuarios Conectados</h2>
+                <ul id="users"></ul>
+            </aside>
+            
+            <main id="chat-main">
+                <div id="messages"></div>
+                
+                <div id="input-area">
+                    <input type="text" id="usernameInput" placeholder="Tu nombre...">
+                    <div id="message-input-wrapper">
+                        <input type="text" id="messageInput" placeholder="Escribe tu mensaje...">
+                        <button id="sendButton">Enviar</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="js/chat.js"></script>
+</body>
+</html>
