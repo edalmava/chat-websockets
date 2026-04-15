@@ -2,6 +2,8 @@ const Websocket = require('ws');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const Logger = require('./Logger');
+//const Logger = require('./Logger');
 
 // ============================================
 // CONFIGURACIÓN HTTPS/WSS
@@ -101,13 +103,8 @@ function sanitizeObject(obj) {
 // FUNCIONES DE UTILIDAD
 // ============================================
 
-/**
- * Registra un mensaje con timestamp en consola
- */
-function log(message) {
-    const timestamp = new Date().toLocaleString('es-ES');
-    console.log(`[${timestamp}] ${message}`);
-}
+// Inicializar logger (auditoría persistente a archivos JSON)
+const logger = new Logger();
 
 /**
  * Valida que el usuario tenga formato correcto
@@ -209,7 +206,9 @@ function broadcastMessage(obj) {
             }   
         });
     } catch (error) {
-        log(`❌ Error al enviar mensaje broadcast: ${error.message}`);
+        logger.log('ERROR', 'broadcast_error', 'system', {
+            errorMsg: error.message
+        });
     }
 }
 
@@ -228,7 +227,9 @@ function enviarError(client, error) {
             client.send(JSON.stringify(errorObj));
         }
     } catch (err) {
-        log(`❌ Error al enviar error al cliente: ${err.message}`);
+        logger.log('ERROR', 'send_error_failed', 'system', {
+            errorMsg: err.message
+        });
     }
 }
 
@@ -243,14 +244,18 @@ wss.on('connection', (ws, req) => {
     
     // VALIDACIÓN CORS: Verificar origen permitido
     if (!isOriginAllowed(req.headers.origin)) {
-        log(`🚫 CORS BLOQUEADO: Origen no permitido "${origin}"`);
+        logger.log('WARNING', 'cors_rejected', clientId, {
+            origin_rechazado: origin
+        });
         ws.close(1008, 'Origen no autorizado (CORS)');
         return;
     }
     
-    log(`✅ Cliente conectado: ${clientId}`);
-    log(`   Origen: ${origin}`);
-    log(`   Total de conexiones: ${wss.clients.size}`);
+    logger.log('INFO', 'client_connection', clientId, {
+        origin: origin,
+        totalConexiones: wss.clients.size,
+        userAgent: userAgent
+    });
     
     // Inicializar propiedades del cliente
     ws.id = clientId;
@@ -269,7 +274,9 @@ wss.on('connection', (ws, req) => {
             try {
                 messageData = JSON.parse(message.toString());
             } catch (parseError) {
-                log(`⚠️  Cliente ${clientId} envió JSON inválido`);
+                logger.log('WARNING', 'invalid_json', clientId, {
+                    error: parseError.message
+                });
                 enviarError(ws, 'JSON inválido. Asegúrate de enviar un objeto válido');
                 return;
             }
@@ -279,7 +286,9 @@ wss.on('connection', (ws, req) => {
                 // Validar nombre de usuario
                 const validación = validarUsuario(messageData.usuario);
                 if (!validación.válido) {
-                    log(`⚠️  Cliente ${clientId} - Validación fallida: ${validación.error}`);
+                    logger.log('WARNING', 'user_validation_failed', clientId, {
+                        razon: validación.error
+                    });
                     enviarError(ws, validación.error);
                     return;
                 }
@@ -287,7 +296,9 @@ wss.on('connection', (ws, req) => {
                 ws.nombreUsuario = validación.usuario;
                 ws.usuarioIdentificado = true;
                 
-                log(`🆔 Usuario identificado: "${ws.nombreUsuario}" (${clientId})`);
+                logger.log('INFO', 'user_identified', clientId, {
+                    username: ws.nombreUsuario
+                });
                 
                 // Notificar a todos que el usuario se conectó
                 broadcastMessage({ 
@@ -302,10 +313,15 @@ wss.on('connection', (ws, req) => {
             }
 
             // MENSAJES SIGUIENTES: Validar y enviar mensaje
+            // Medir latencia
+            const messageStartTime = Date.now();
+            
             // Verificar rate limit
             const rateLimitCheck = verificarRateLimit(ws);
             if (!rateLimitCheck.permitido) {
-                log(`⏱️  Cliente ${ws.nombreUsuario} - Rate limit excedido`);
+                logger.log('WARNING', 'rate_limit_exceeded', clientId, {
+                    username: ws.nombreUsuario
+                });
                 enviarError(ws, rateLimitCheck.error);
                 return;
             }
@@ -313,7 +329,10 @@ wss.on('connection', (ws, req) => {
             // Validar contenido del mensaje
             const validaciónMensaje = validarMensaje(messageData.mensaje);
             if (!validaciónMensaje.válido) {
-                log(`⚠️  Cliente ${ws.nombreUsuario} - Validación de mensaje fallida: ${validaciónMensaje.error}`);
+                logger.log('WARNING', 'message_validation_failed', clientId, {
+                    username: ws.nombreUsuario,
+                    razon: validaciónMensaje.error
+                });
                 enviarError(ws, validaciónMensaje.error);
                 return;
             }
@@ -326,10 +345,19 @@ wss.on('connection', (ws, req) => {
             };
             
             broadcastMessage(mensajeFinal);
-            log(`💬 Mensaje de "${ws.nombreUsuario}": "${validaciónMensaje.mensaje.substring(0, 50)}${validaciónMensaje.mensaje.length > 50 ? '...' : ''}"`);
+            
+            // Log de mensaje (nivel DEBUG)
+            logger.log('DEBUG', 'message_broadcast', clientId, {
+                username: ws.nombreUsuario,
+                messageLength: validaciónMensaje.mensaje.length,
+                latency_ms: Date.now() - messageStartTime
+            });
 
         } catch (error) {
-            log(`❌ Error procesando mensaje: ${error.message}`);
+            logger.log('ERROR', 'message_processing_error', clientId, {
+                username: ws.nombreUsuario || 'desconocido',
+                errorMsg: error.message
+            });
             enviarError(ws, 'Error interno al procesar el mensaje');
         }
     });
@@ -339,7 +367,10 @@ wss.on('connection', (ws, req) => {
     // ========================================
     ws.on('close', () => {
         if (ws.usuarioIdentificado) {
-            log(`👋 Usuario desconectado: "${ws.nombreUsuario}" (${clientId}) (Total: ${wss.clients.size - 1})`);
+            logger.log('INFO', 'user_disconnection', clientId, {
+                username: ws.nombreUsuario,
+                totalConexiones: wss.clients.size - 1
+            });
             
             broadcastMessage({ 
                 usuario: 'Servidor', 
@@ -350,7 +381,7 @@ wss.on('connection', (ws, req) => {
             
             enviarListaUsuarios();
         } else {
-            log(`👋 Cliente desconectado antes de identificarse: ${clientId}`);
+            logger.log('DEBUG', 'client_disconnection_unidentified', clientId, {});
         }
 
         // Limpiar referencias para evitar memory leaks
@@ -361,7 +392,10 @@ wss.on('connection', (ws, req) => {
     // EVENTO: ERROR
     // ========================================
     ws.on('error', (error) => {
-        log(`❌ Error en cliente ${clientId}: ${error.message}`);
+        logger.log('ERROR', 'websocket_error', clientId, {
+            username: ws.nombreUsuario || 'desconocido',
+            errorMsg: error.message
+        });
     });
 });
 
@@ -373,7 +407,10 @@ setInterval(() => {
     const usuariosConectados = Array.from(wss.clients)
         .filter(client => client.usuarioIdentificado)
         .length;
-    log(`📊 Estadísticas - Clientes activos: ${usuariosConectados} / Total de conexiones: ${wss.clients.size}`);
+    logger.log('INFO', 'stats_report', 'system', {
+        usuariosActivos: usuariosConectados,
+        totalConexiones: wss.clients.size
+    });
 }, 30000); // Cada 30 segundos
 
 // ============================================
@@ -381,22 +418,30 @@ setInterval(() => {
 // ============================================
 
 httpsServer.listen(PORT, () => {
-    log(`🚀 Servidor WSS (WebSocket Secure) iniciado`);
-    log(`🔒 URL: wss://localhost:${PORT}`);
-    log(`🔑 Certificados SSL cargados desde: certs/`);
-    log(`\n🌐 Configuración CORS (Orígenes Permitidos):`);
-    ALLOWED_ORIGINS.forEach((origin, idx) => {
-        log(`   ${idx + 1}. ${origin}`);
+    logger.log('INFO', 'server_started', 'system', {
+        url: `wss://localhost:${PORT}`,
+        certsPath: 'certs/',
+        correlativosPermitidos: ALLOWED_ORIGINS.length
     });
-    log(`\n⚙️  Validación de Datos:`);
-    log(`   - Username: ${VALIDACIÓN.USERNAME_MIN}-${VALIDACIÓN.USERNAME_MAX} caracteres`);
-    log(`   - Mensaje: ${VALIDACIÓN.MESSAGE_MIN}-${VALIDACIÓN.MESSAGE_MAX} caracteres`);
-    log(`   - Rate limit: ${VALIDACIÓN.RATE_LIMIT_MESSAGES} mensajes/${VALIDACIÓN.RATE_LIMIT_WINDOW}ms`);
-    log(`\n🛡️  Características de Seguridad:`);
-    log(`   - Encriptación WSS/TLS: ACTIVADA`);
-    log(`   - Sanitización XSS: ACTIVADA`);
-    log(`   - CORS: ACTIVADO`);
-    log(`   - Rate limiting: ACTIVADO`);
-    log(`   - Validación de entrada: ACTIVADA`);
-    log(`\n📝 Nota: Para producción, actualiza ALLOWED_ORIGINS con tus dominios\n`);
+
+    console.log(`\n🚀 Servidor WSS (WebSocket Secure) iniciado`);
+    console.log(`🔒 URL: wss://localhost:${PORT}`);
+    console.log(`🔑 Certificados SSL cargados desde: certs/`);
+    console.log(`📝 Logs guardados en: ${logger.LOG_DIR}`);
+    console.log(`\n🌐 Configuración CORS (${ALLOWED_ORIGINS.length} orígenes permitidos):`);
+    ALLOWED_ORIGINS.forEach((origin, idx) => {
+        console.log(`   ${idx + 1}. ${origin}`);
+    });
+    console.log(`\n⚙️  Validación de Datos:`);
+    console.log(`   - Username: ${VALIDACIÓN.USERNAME_MIN}-${VALIDACIÓN.USERNAME_MAX} caracteres`);
+    console.log(`   - Mensaje: ${VALIDACIÓN.MESSAGE_MIN}-${VALIDACIÓN.MESSAGE_MAX} caracteres`);
+    console.log(`   - Rate limit: ${VALIDACIÓN.RATE_LIMIT_MESSAGES} mensajes/${VALIDACIÓN.RATE_LIMIT_WINDOW}ms`);
+    console.log(`\n🛡️  Características de Seguridad:`);
+    console.log(`   - Encriptación WSS/TLS: ACTIVADA`);
+    console.log(`   - Sanitización XSS: ACTIVADA`);
+    console.log(`   - CORS: ACTIVADO`);
+    console.log(`   - Rate limiting: ACTIVADO`);
+    console.log(`   - Validación de entrada: ACTIVADA`);
+    console.log(`   - Logging persistente: ACTIVADO (JSON + Rotación Automática)`);
+    console.log(`\n📝 Nota: Para producción, actualiza ALLOWED_ORIGINS con tus dominios\n`);
 });
