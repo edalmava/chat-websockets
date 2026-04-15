@@ -1,0 +1,173 @@
+# ============================================
+# DEPENDENCIAS Y MÓDULOS
+# ============================================
+node_modules/
+package-lock.json
+yarn.lock
+
+# ============================================
+# CERTIFICADOS Y SEGURIDAD
+# ============================================
+certs/
+*.pem
+*.crt
+*.key
+*.pfx
+*.p12
+.env
+.env.local
+.env.*.local
+secrets/
+
+# ============================================
+# LOGS Y TEMPORALES
+# ============================================
+*.log
+logs/
+*.pid
+*.seed
+.pm2/
+.pm2logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================
+# ARCHIVOS DEL SISTEMA
+# ============================================
+.DS_Store
+Thumbs.db
+.Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ============================================
+# DIRECTORIOS DE BUILD
+# ============================================
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+
+# ============================================
+# BASES DE DATOS
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+*.mongodb
+data/
+
+# ============================================
+# BACKUPS
+# ============================================
+*.bak
+*.backup
+*.tmp
+*.temp
+
+# ============================================
+# DIRECTORIOS DE IDEs
+# ============================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.sublime-project
+.sublime-workspace
+
+# ============================================
+# OS SPECIFIC
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+desktop.ini
+$RECYCLE.BIN/
+ehthumbs.db
+.windows/
+
+# Linux
+.directory
+
+# ============================================
+# CONFIGURACIÓN LOCAL (OPCIONAL)
+# ============================================
+# Descomenta estas líneas si quieres ignorar configuración local
+# .vscode/
+# .idea/
+# *.code-workspace
+
+# ============================================
+# ARCHIVOS TEMPORALES DE DESARROLLO
+# ============================================
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.prettierignore
+
+# ============================================
+# TESTING
+# ============================================
+coverage/
+.nyc_output/
+.jest-cache/
+.mocha-cache/
+
+# ============================================
+# VARIABLES DE ENTORNO (NUNCA COMMITEAR CREDENCIALES)
+# ============================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+config.json
+credentials.json
+secrets.json
+
+# ============================================
+# ARCHIVOS ESPECÍFICOS DEL PROYECTO
+# ============================================
+# Logs del PM2
+.pm2/
+logs/
+
+# Certificados generados localmente (desarrollo)
+certs/server.crt
+certs/server.key
+certs/server.pfx
+
+# Variables de entorno del servidor
+server/.env
+server/.env.local
+
+# Estadísticas de análisis
+stats.json
+bundle-report.html
+
+# ============================================
+# ARCHIVOS QUE SÍ DEBES COMMITEAR
+# ============================================
+# !.gitkeep              # Mantener directorios vacíos
+# !certs/.gitkeep        # Si necesitas que los directorios existan
+# !/logs/.gitkeep

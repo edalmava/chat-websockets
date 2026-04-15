@@ -1,10 +1,24 @@
-const socket = new WebSocket('ws://localhost:8080');
+const socket = new WebSocket('wss://localhost:8443');
 
 const sendButton = document.getElementById('sendButton');
 const messages = document.getElementById('messages');
 const usernameInput = document.getElementById('usernameInput');
 const messageInput = document.getElementById('messageInput');
 const usersList = document.getElementById('users');
+
+// ============================================
+// SANITIZACIÓN XSS EN CLIENTE (Defensa en profundidad)
+// ============================================
+
+/**
+ * Escapa caracteres HTML para prevenir XSS
+ */
+function sanitizeHtml(text) {
+    if (typeof text !== 'string') return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 // Paleta de colores para los usuarios
 const colorPalette = [
@@ -36,7 +50,20 @@ function getUserColor(username) {
 }
 
 socket.addEventListener('open', () => {
-    console.log('Conexión establecida con el servidor');
+    console.log('✅ Conexión WSS establecida con el servidor de forma segura');
+});
+
+socket.addEventListener('error', (event) => {
+    console.error('❌ Error de conexión WSS:', event);
+    // Si ves error de certificado auto-firmado, acepta la excepción del navegador
+    const errorMsg = document.createElement('div');
+    errorMsg.style.cssText = 'background-color: #fee2e2; border: 1px solid #dc2626; color: #7f1d1d; padding: 12px; border-radius: 6px; margin-bottom: 10px';
+    errorMsg.innerHTML = `
+        <strong>⚠️ Error de conexión:</strong><br>
+        Si ves un error de certificado, es normal (certificado auto-firmado para desarrollo).<br>
+        Abre el navegador devtools (F12) y acepta la excepción de seguridad.
+    `;
+    document.body.insertBefore(errorMsg, document.body.firstChild);
 });
 
 function sendMessage() {

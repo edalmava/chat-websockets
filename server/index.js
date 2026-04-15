@@ -1,18 +1,101 @@
 const Websocket = require('ws');
-
-const wss = new Websocket.Server({ port: 8080 });
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 // ============================================
-// CONSTANTES DE VALIDACIÓN
+// CONFIGURACIÓN HTTPS/WSS
 // ============================================
+const certDir = path.join(__dirname, '../certs');
+const options = {
+    cert: fs.readFileSync(path.join(certDir, 'server.crt')),
+    key: fs.readFileSync(path.join(certDir, 'server.key'))
+};
+
+// Crear servidor HTTPS
+const httpsServer = https.createServer(options);
+
+// Crear WebSocket Server sobre HTTPS (WSS)
+const wss = new Websocket.Server({ server: httpsServer });
+
+// ============================================
+// CONSTANTES Y CONFIGURACIÓN
+// ============================================
+const PORT = 8443;
+
+// Orígenes permitidos para CORS (WebSocket)
+const ALLOWED_ORIGINS = [
+    'http://localhost:5500',    // Live Server (VS Code)
+    'http://localhost:3000',    // Servidores locales comunes
+    'http://localhost:8000',
+    'http://localhost:8080',
+    'http://127.0.0.1:5500',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:8000',
+    'http://127.0.0.1:8080',
+    'https://localhost:5500',   // HTTPS local
+    'https://localhost:3000',
+    'https://127.0.0.1:5500',
+    'https://127.0.0.1:3000',
+    // En producción, agregar tu dominio:
+    // 'https://www.tudominio.com',
+    // 'https://tudominio.com'
+];
+
 const VALIDACIÓN = {
     USERNAME_MIN: 1,
     USERNAME_MAX: 50,
     MESSAGE_MIN: 1,
     MESSAGE_MAX: 500,
-    RATE_LIMIT_MESSAGES: 5,      // Máximo de mensajes por segundo
-    RATE_LIMIT_WINDOW: 1000      // Ventana en milisegundos (1 segundo)
+    RATE_LIMIT_MESSAGES: 5,
+    RATE_LIMIT_WINDOW: 1000
 };
+
+// ============================================
+// FUNCIONES DE SEGURIDAD
+// ============================================
+
+/**
+ * Valida si el origen está permitido (CORS)
+ * @param {string} origin - Header 'Origin' de la solicitud
+ * @returns {boolean}
+ */
+function isOriginAllowed(origin) {
+    if (!origin) return false;
+    return ALLOWED_ORIGINS.includes(origin);
+}
+
+/**
+ * Escapa caracteres HTML peligrosos para prevenir XSS
+ * @param {string} text - Texto a sanitizar
+ * @returns {string} Texto escapado
+ */
+function sanitizeHtml(text) {
+    if (typeof text !== 'string') return '';
+    
+    const htmlEscapeMap = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    
+    return text.replace(/[&<>"']/g, char => htmlEscapeMap[char]);
+}
+
+/**
+ * Sanitiza recursivamente un objeto (usuario y mensaje)
+ */
+function sanitizeObject(obj) {
+    if (typeof obj !== 'object' || obj === null) return obj;
+    
+    const sanitized = { ...obj };
+    if (sanitized.usuario) sanitized.usuario = sanitizeHtml(sanitized.usuario);
+    if (sanitized.mensaje) sanitized.mensaje = sanitizeHtml(sanitized.mensaje);
+    
+    return sanitized;
+}
 
 // ============================================
 // FUNCIONES DE UTILIDAD
@@ -116,7 +199,10 @@ function enviarListaUsuarios() {
  */
 function broadcastMessage(obj) {
     try {
-        const data = JSON.stringify(obj);
+        // Sanitizar datos antes de enviar
+        const sanitized = sanitizeObject(obj);
+        const data = JSON.stringify(sanitized);
+        
         wss.clients.forEach((client) => {
             if (client.readyState === Websocket.OPEN) {     
                 client.send(data);
@@ -133,12 +219,13 @@ function broadcastMessage(obj) {
 function enviarError(client, error) {
     try {
         if (client.readyState === Websocket.OPEN) {
-            client.send(JSON.stringify({
+            const errorObj = {
                 usuario: 'Servidor',
-                mensaje: error,
+                mensaje: sanitizeHtml(error),
                 tipo: 'error',
                 timestamp: new Date().toISOString()
-            }));
+            };
+            client.send(JSON.stringify(errorObj));
         }
     } catch (err) {
         log(`❌ Error al enviar error al cliente: ${err.message}`);
@@ -149,12 +236,25 @@ function enviarError(client, error) {
 // EVENTO: NUEVA CONEXIÓN
 // ============================================
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
     const clientId = Math.random().toString(36).substr(2, 9);
-    log(`✅ Cliente conectado: ${clientId} (Total: ${wss.clients.size})`);
+    const origin = req.headers.origin || 'sin-origen';
+    const userAgent = req.headers['user-agent'] || 'desconocido';
+    
+    // VALIDACIÓN CORS: Verificar origen permitido
+    if (!isOriginAllowed(req.headers.origin)) {
+        log(`🚫 CORS BLOQUEADO: Origen no permitido "${origin}"`);
+        ws.close(1008, 'Origen no autorizado (CORS)');
+        return;
+    }
+    
+    log(`✅ Cliente conectado: ${clientId}`);
+    log(`   Origen: ${origin}`);
+    log(`   Total de conexiones: ${wss.clients.size}`);
     
     // Inicializar propiedades del cliente
     ws.id = clientId;
+    ws.origin = origin;
     ws.usuarioIdentificado = false;
     ws.nombreUsuario = null;
     ws.messageTimestamps = [];
@@ -277,12 +377,26 @@ setInterval(() => {
 }, 30000); // Cada 30 segundos
 
 // ============================================
-// INICIO DEL SERVIDOR
+// INIT DEL SERVIDOR
 // ============================================
 
-const PORT = 8080;
-log(`🚀 Servidor WebSocket iniciado en ws://localhost:${PORT}`);
-log(`⚙️  Configuración:`);
-log(`   - Username: ${VALIDACIÓN.USERNAME_MIN}-${VALIDACIÓN.USERNAME_MAX} caracteres`);
-log(`   - Mensaje: ${VALIDACIÓN.MESSAGE_MIN}-${VALIDACIÓN.MESSAGE_MAX} caracteres`);
-log(`   - Rate limit: ${VALIDACIÓN.RATE_LIMIT_MESSAGES} mensajes/${VALIDACIÓN.RATE_LIMIT_WINDOW}ms`);
+httpsServer.listen(PORT, () => {
+    log(`🚀 Servidor WSS (WebSocket Secure) iniciado`);
+    log(`🔒 URL: wss://localhost:${PORT}`);
+    log(`🔑 Certificados SSL cargados desde: certs/`);
+    log(`\n🌐 Configuración CORS (Orígenes Permitidos):`);
+    ALLOWED_ORIGINS.forEach((origin, idx) => {
+        log(`   ${idx + 1}. ${origin}`);
+    });
+    log(`\n⚙️  Validación de Datos:`);
+    log(`   - Username: ${VALIDACIÓN.USERNAME_MIN}-${VALIDACIÓN.USERNAME_MAX} caracteres`);
+    log(`   - Mensaje: ${VALIDACIÓN.MESSAGE_MIN}-${VALIDACIÓN.MESSAGE_MAX} caracteres`);
+    log(`   - Rate limit: ${VALIDACIÓN.RATE_LIMIT_MESSAGES} mensajes/${VALIDACIÓN.RATE_LIMIT_WINDOW}ms`);
+    log(`\n🛡️  Características de Seguridad:`);
+    log(`   - Encriptación WSS/TLS: ACTIVADA`);
+    log(`   - Sanitización XSS: ACTIVADA`);
+    log(`   - CORS: ACTIVADO`);
+    log(`   - Rate limiting: ACTIVADO`);
+    log(`   - Validación de entrada: ACTIVADA`);
+    log(`\n📝 Nota: Para producción, actualiza ALLOWED_ORIGINS con tus dominios\n`);
+});
