@@ -134,41 +134,75 @@ h2 {
     overflow: hidden;
 }
 
+#loginRoomSelect {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 1rem;
+    margin-bottom: 20px;
+    background: white;
+    cursor: pointer;
+}
+
+#loginRoomSelect:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
 /* ============================================
-   LISTA DE USUARIOS
+   SIDEBAR (Salas + Usuarios)
    ============================================ */
-#user-list {
+#sidebar {
     background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
     border-right: 1px solid var(--border-color);
-    padding: 20px 15px;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
 }
 
-#user-list::-webkit-scrollbar {
-    width: 6px;
+#room-list, #user-list {
+    padding: 20px 15px;
 }
 
-#user-list::-webkit-scrollbar-track {
-    background: transparent;
+#room-list {
+    border-bottom: 1px solid var(--border-color);
 }
 
-#user-list::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
+#sidebar h2 {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
 }
 
-#user-list::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
-}
-
-#user-list ul {
+#rooms, #users {
     list-style: none;
     padding: 0;
     margin: 0;
 }
 
+#rooms li {
+    padding: 8px 12px;
+    margin-bottom: 5px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+#rooms li:hover {
+    background: var(--bg-tertiary);
+}
+
+#rooms li.active {
+    background: var(--primary-color);
+    color: white;
+    font-weight: 600;
+}
+
+/* Reutilizar estilos de lista de usuarios para el nuevo sidebar */
 #user-list li {
     padding: 10px 12px;
     background: white;
@@ -178,7 +212,6 @@ h2 {
     font-size: 0.9rem;
     color: var(--text-primary);
     transition: all 0.2s ease;
-    cursor: pointer;
     box-shadow: var(--shadow-sm);
     position: relative;
 }
@@ -392,12 +425,26 @@ h2 {
     border: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     flex-shrink: 0;
     position: sticky;
     bottom: 0;
     box-shadow: var(--shadow-md);
     z-index: 10;
+}
+
+#typing-indicator {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    min-height: 1.2rem;
+    animation: fadeIn 0.3s ease;
+    padding-left: 5px;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 #usernameInput {

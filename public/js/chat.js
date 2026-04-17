@@ -4,6 +4,7 @@ const socket = new WebSocket('ws://localhost:8443');
 const loginContainer = document.getElementById('login-container');
 const chatContainer = document.getElementById('chat-container');
 const loginUsernameInput = document.getElementById('loginUsernameInput');
+const loginRoomSelect = document.getElementById('loginRoomSelect');
 const joinButton = document.getElementById('joinButton');
 const userIdentity = document.getElementById('user-identity');
 const currentUsernameSpan = document.getElementById('current-username');
@@ -12,8 +13,14 @@ const sendButton = document.getElementById('sendButton');
 const messages = document.getElementById('messages');
 const messageInput = document.getElementById('messageInput');
 const usersList = document.getElementById('users');
+const roomListItems = document.querySelectorAll('#rooms li');
+const typingIndicator = document.getElementById('typing-indicator');
 
 let miNombreUsuario = '';
+let salaActual = '';
+let estaEscribiendo = false;
+let typingTimeout = null;
+const usuariosEscribiendo = new Set();
 
 // ============================================
 // SANITIZACIÓN XSS EN CLIENTE (Defensa en profundidad)
@@ -64,7 +71,6 @@ socket.addEventListener('open', () => {
 
 socket.addEventListener('error', (event) => {
     console.error('❌ Error de conexión WSS:', event);
-    // Si ves error de certificado auto-firmado, acepta la excepción del navegador
     const errorMsg = document.createElement('div');
     errorMsg.style.cssText = 'background-color: #fee2e2; border: 1px solid #dc2626; color: #7f1d1d; padding: 12px; border-radius: 6px; margin-bottom: 10px';
     errorMsg.innerHTML = `
@@ -79,16 +85,34 @@ socket.addEventListener('error', (event) => {
  * Envía solicitud para unirse al chat
  */
 function joinChat() {
-    const username = loginUsernameInput.value.trim();
+    const username = miNombreUsuario || loginUsernameInput.value.trim();
+    const room = loginRoomSelect.value;
+    
     if (username === '') return;
 
     const joinData = {
         tipo: 'join',
-        usuario: username
+        usuario: username,
+        sala: room
     };
 
     socket.send(JSON.stringify(joinData));
     miNombreUsuario = username;
+}
+
+/**
+ * Cambia de sala
+ */
+function cambiarSala(nuevaSala) {
+    if (nuevaSala === salaActual) return;
+
+    const joinData = {
+        tipo: 'join',
+        usuario: miNombreUsuario,
+        sala: nuevaSala
+    };
+
+    socket.send(JSON.stringify(joinData));
 }
 
 /**
@@ -98,6 +122,8 @@ function sendMessage() {
     const message = messageInput.value.trim();
     if (message === '') return;
     
+    detenerNotificacionEscritura();
+
     const messageData = { 
         tipo: 'chat',
         mensaje: message 
@@ -107,10 +133,39 @@ function sendMessage() {
     messageInput.value = '';
 } 
 
+/**
+ * Notifica al servidor el estado de escritura
+ */
+function enviarEstadoEscritura(escribiendo) {
+    if (estaEscribiendo === escribiendo) return;
+    estaEscribiendo = escribiendo;
+
+    socket.send(JSON.stringify({
+        tipo: 'typing',
+        escribiendo: escribiendo
+    }));
+}
+
+function detenerNotificacionEscritura() {
+    enviarEstadoEscritura(false);
+    if (typingTimeout) {
+        clearTimeout(typingTimeout);
+        typingTimeout = null;
+    }
+}
+
 // Listeners de eventos
 joinButton.addEventListener('click', joinChat);
 loginUsernameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') joinChat();
+});
+
+// Cambiar de sala al hacer clic en el sidebar
+roomListItems.forEach(item => {
+    item.addEventListener('click', () => {
+        const nuevaSala = item.getAttribute('data-room');
+        cambiarSala(nuevaSala);
+    });
 });
 
 sendButton.addEventListener('click', sendMessage);
@@ -118,12 +173,36 @@ messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
 });
 
+// Detectar escritura
+messageInput.addEventListener('input', () => {
+    enviarEstadoEscritura(true);
+
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        enviarEstadoEscritura(false);
+        typingTimeout = null;
+    }, 2000);
+});
+
 socket.addEventListener('message', (event) => {
     const data = JSON.parse(event.data);
     
-    // MANEJO SEGÚN TIPO DE MENSAJE
     switch (data.tipo) {
         case 'join-success':
+            // Si es un cambio de sala, limpiar mensajes y actualizar UI
+            if (salaActual !== data.sala) {
+                messages.innerHTML = '';
+                usuariosEscribiendo.clear();
+                actualizarVisualizacionTyping();
+                
+                // Actualizar clase activa en sidebar
+                roomListItems.forEach(li => {
+                    li.classList.toggle('active', li.getAttribute('data-room') === data.sala);
+                });
+            }
+
+            salaActual = data.sala;
+            
             // Ocultar login y mostrar chat
             loginContainer.classList.add('hidden');
             chatContainer.classList.remove('hidden');
@@ -133,16 +212,19 @@ socket.addEventListener('message', (event) => {
             currentUsernameSpan.textContent = miNombreUsuario;
             
             messageInput.focus();
-            console.log('🎉 Unido exitosamente como:', miNombreUsuario);
+            console.log(`🎉 Unido exitosamente a [${salaActual}] como:`, miNombreUsuario);
             break;
 
         case 'lista-usuarios':
             actualizarListaUsuarios(data.usuarios);
             break;
 
+        case 'user-typing':
+            manejarIndicadorEscritura(data.usuario, data.escribiendo);
+            break;
+
         case 'error':
             mostrarMensaje(data);
-            // Si el error ocurrió durante el join, no ocultamos el login
             break;
 
         default:
@@ -150,6 +232,34 @@ socket.addEventListener('message', (event) => {
             break;
     }
 });
+
+function manejarIndicadorEscritura(usuario, escribiendo) {
+    if (escribiendo) {
+        usuariosEscribiendo.add(usuario);
+    } else {
+        usuariosEscribiendo.delete(usuario);
+    }
+
+    actualizarVisualizacionTyping();
+}
+
+function actualizarVisualizacionTyping() {
+    const lista = Array.from(usuariosEscribiendo);
+    
+    if (lista.length === 0) {
+        typingIndicator.textContent = '';
+        typingIndicator.classList.add('hidden');
+    } else {
+        typingIndicator.classList.remove('hidden');
+        if (lista.length === 1) {
+            typingIndicator.textContent = `${lista[0]} está escribiendo...`;
+        } else if (lista.length === 2) {
+            typingIndicator.textContent = `${lista[0]} y ${lista[1]} están escribiendo...`;
+        } else {
+            typingIndicator.textContent = 'Varios usuarios están escribiendo...';
+        }
+    }
+}
 
 function actualizarListaUsuarios(usuarios) {
     usersList.innerHTML = '';
@@ -172,14 +282,12 @@ function mostrarMensaje(data) {
     const isSystemMessage = data.tipo === 'sistema';
     
     if (isErrorMessage) {
-        // Mensajes de error
         messageElement.classList.add('error-message');
         messageElement.innerHTML = `
             <div class="error-icon">⚠️</div>
             <div class="error-text">${messageText}</div>
         `;
     } else if (isSystemMessage || isServerMessage) {
-        // Mensajes del servidor/sistema
         messageElement.classList.add('server-message');
         messageElement.innerHTML = `
             <div class="system-icon">ℹ️</div>
@@ -187,7 +295,6 @@ function mostrarMensaje(data) {
             <div class="message-time">${formatTime(data.timestamp)}</div>
         `;
     } else {
-        // Mensajes de usuario
         messageElement.classList.add('user-message');
         const userColor = getUserColor(username);
         messageElement.style.setProperty('--user-color', userColor);
@@ -214,9 +321,6 @@ function mostrarMensaje(data) {
     messages.scrollTop = messages.scrollHeight;
 }
 
-/**
- * Formatea el timestamp ISO al formato local
- */
 function formatTime(isoTimestamp) {
     if (!isoTimestamp) return '';
     try {

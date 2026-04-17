@@ -32,8 +32,11 @@ const VALIDACION = {
     RATE_LIMIT_WINDOW: 1000
 };
 
+const SALAS_POR_DEFECTO = ['General', 'Desarrollo', 'Soporte', 'Random'];
+
 module.exports = {
     PORT,
     ALLOWED_ORIGINS,
-    VALIDACION
+    VALIDACION,
+    SALAS_POR_DEFECTO
 };

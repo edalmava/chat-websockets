@@ -9,31 +9,34 @@ const { validarUsuario, validarMensaje, verificarRateLimit } = require('../utils
 module.exports = function(wss, logger) {
 
     /**
-     * Envía la lista de usuarios conectados a todos los clientes
+     * Envía la lista de usuarios conectados a todos los clientes de una sala específica
      */
-    function enviarListaUsuarios() {
+    function enviarListaUsuarios(sala) {
         const usuariosConectados = Array.from(wss.clients)
-            .filter(client => client.usuarioIdentificado)
+            .filter(client => client.usuarioIdentificado && client.sala === sala)
             .map(client => client.nombreUsuario);   
         
         broadcastMessage({ 
             tipo: 'lista-usuarios', 
             usuarios: usuariosConectados,
             timestamp: new Date().toISOString()
-        });
+        }, sala);
     }
 
     /**
-     * Envía un mensaje a todos los clientes conectados
+     * Envía un mensaje a todos los clientes conectados (opcionalmente filtrado por sala)
      */
-    function broadcastMessage(obj) {
+    function broadcastMessage(obj, sala = null) {
         try {
             const sanitized = sanitizeObject(obj);
             const data = JSON.stringify(sanitized);
             
             wss.clients.forEach((client) => {
                 if (client.readyState === Websocket.OPEN) {     
-                    client.send(data);
+                    // Si se especifica sala, filtrar. Si no, enviar a todos.
+                    if (!sala || client.sala === sala) {
+                        client.send(data);
+                    }
                 }   
             });
         } catch (error) {
@@ -85,6 +88,7 @@ module.exports = function(wss, logger) {
         ws.id = clientId;
         ws.usuarioIdentificado = false;
         ws.nombreUsuario = null;
+        ws.sala = null;
         ws.messageTimestamps = [];
 
         ws.on('message', (message) => {
@@ -100,29 +104,55 @@ module.exports = function(wss, logger) {
 
                 switch (messageData.tipo) {
                     case 'join':
-                        if (ws.usuarioIdentificado) return;
+                        const antiguaSala = ws.sala;
 
-                        const validUser = validarUsuario(messageData.usuario);
-                        if (!validUser.válido) {
-                            logger.log('WARNING', 'user_validation_failed', clientId, { razon: validUser.error });
-                            enviarError(ws, validUser.error);
-                            return;
+                        // Validar nombre de usuario (solo si no está ya identificado)
+                        if (!ws.usuarioIdentificado) {
+                            const validUser = validarUsuario(messageData.usuario);
+                            if (!validUser.válido) {
+                                logger.log('WARNING', 'user_validation_failed', clientId, { razon: validUser.error });
+                                enviarError(ws, validUser.error);
+                                return;
+                            }
+                            ws.nombreUsuario = validUser.usuario;
+                            ws.usuarioIdentificado = true;
+                            logger.log('INFO', 'user_identified', clientId, { username: ws.nombreUsuario });
                         }
 
-                        ws.nombreUsuario = validUser.usuario;
-                        ws.usuarioIdentificado = true;
+                        // Asignar nueva sala
+                        const nuevaSala = messageData.sala || 'General';
                         
-                        logger.log('INFO', 'user_identified', clientId, { username: ws.nombreUsuario });
-                        ws.send(JSON.stringify({ tipo: 'join-success' }));
+                        // Si cambia de sala, notificar salida de la antigua
+                        if (antiguaSala && antiguaSala !== nuevaSala) {
+                            broadcastMessage({
+                                usuario: 'Servidor',
+                                mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
+                                tipo: 'sistema',
+                                timestamp: new Date().toISOString()
+                            }, antiguaSala);
+                        }
 
+                        ws.sala = nuevaSala;
+                        
+                        // Confirmar éxito al cliente
+                        ws.send(JSON.stringify({ 
+                            tipo: 'join-success',
+                            sala: nuevaSala 
+                        }));
+
+                        // Notificar a la nueva sala
                         broadcastMessage({ 
                             usuario: 'Servidor', 
-                            mensaje: `El usuario "${ws.nombreUsuario}" se ha conectado`,
+                            mensaje: `El usuario "${ws.nombreUsuario}" se ha unido a la sala: ${nuevaSala}`,
                             tipo: 'sistema',
                             timestamp: new Date().toISOString()
-                        });
+                        }, nuevaSala);
                         
-                        enviarListaUsuarios();
+                        // Actualizar listas de usuarios en ambas salas si hubo cambio
+                        if (antiguaSala && antiguaSala !== nuevaSala) {
+                            enviarListaUsuarios(antiguaSala);
+                        }
+                        enviarListaUsuarios(nuevaSala);
                         break;
 
                     case 'chat':
@@ -147,15 +177,32 @@ module.exports = function(wss, logger) {
                             return;
                         }
 
+                        // Enviar solo a la sala actual
                         broadcastMessage({
                             usuario: ws.nombreUsuario,
                             mensaje: validMsg.mensaje,
                             timestamp: new Date().toISOString()
-                        });
+                        }, ws.sala);
                         
                         logger.log('DEBUG', 'message_broadcast', clientId, {
                             username: ws.nombreUsuario,
+                            sala: ws.sala,
                             latency_ms: Date.now() - messageStartTime
+                        });
+                        break;
+
+                    case 'typing':
+                        if (!ws.usuarioIdentificado) return;
+
+                        // Retransmitir solo a los de la misma sala
+                        wss.clients.forEach((client) => {
+                            if (client !== ws && client.readyState === Websocket.OPEN && client.sala === ws.sala) {
+                                client.send(JSON.stringify({
+                                    tipo: 'user-typing',
+                                    usuario: ws.nombreUsuario,
+                                    escribiendo: messageData.escribiendo
+                                }));
+                            }
                         });
                         break;
 
@@ -173,13 +220,17 @@ module.exports = function(wss, logger) {
         ws.on('close', () => {
             if (ws.usuarioIdentificado) {
                 logger.log('INFO', 'user_disconnection', clientId, { username: ws.nombreUsuario, totalConexiones: wss.clients.size - 1 });
-                broadcastMessage({ 
-                    usuario: 'Servidor', 
-                    mensaje: `El usuario "${ws.nombreUsuario}" se ha desconectado`,
-                    tipo: 'sistema',
-                    timestamp: new Date().toISOString()
-                });
-                enviarListaUsuarios();
+                
+                if (ws.sala) {
+                    broadcastMessage({ 
+                        usuario: 'Servidor', 
+                        mensaje: `El usuario "${ws.nombreUsuario}" se ha desconectado`,
+                        tipo: 'sistema',
+                        timestamp: new Date().toISOString()
+                    }, ws.sala);
+                    
+                    enviarListaUsuarios(ws.sala);
+                }
             }
         });
 

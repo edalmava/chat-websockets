@@ -12,17 +12,34 @@
     <div id="login-container">
         <div id="login-box">
             <h2>Bienvenido</h2>
-            <p>Ingresa tu nombre para comenzar a chatear</p>
+            <p>Ingresa tu nombre y selecciona una sala</p>
             <input type="text" id="loginUsernameInput" placeholder="Tu nombre...">
+            <select id="loginRoomSelect">
+                <option value="General">General</option>
+                <option value="Desarrollo">Desarrollo</option>
+                <option value="Soporte">Soporte</option>
+                <option value="Random">Random</option>
+            </select>
             <button id="joinButton">Entrar al Chat</button>
         </div>
     </div>
 
     <div id="chat-container" class="hidden">
         <div id="chat-wrapper">
-            <aside id="user-list">
-                <h2>Usuarios Conectados</h2>
-                <ul id="users"></ul>
+            <aside id="sidebar">
+                <section id="room-list">
+                    <h2>Salas</h2>
+                    <ul id="rooms">
+                        <li data-room="General" class="active">General</li>
+                        <li data-room="Desarrollo">Desarrollo</li>
+                        <li data-room="Soporte">Soporte</li>
+                        <li data-room="Random">Random</li>
+                    </ul>
+                </section>
+                <section id="user-list">
+                    <h2>Usuarios en Sala</h2>
+                    <ul id="users"></ul>
+                </section>
             </aside>
             
             <main id="chat-main">
@@ -34,6 +51,7 @@
                 <div id="messages"></div>
                 
                 <div id="input-area">
+                    <div id="typing-indicator" class="hidden"></div>
                     <div id="message-input-wrapper">
                         <input type="text" id="messageInput" placeholder="Escribe tu mensaje...">
                         <button id="sendButton">Enviar</button>
