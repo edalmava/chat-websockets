@@ -1,10 +1,19 @@
-const socket = new WebSocket('wss://localhost:8443');
+const socket = new WebSocket('ws://localhost:8443');
+
+// Elementos del DOM
+const loginContainer = document.getElementById('login-container');
+const chatContainer = document.getElementById('chat-container');
+const loginUsernameInput = document.getElementById('loginUsernameInput');
+const joinButton = document.getElementById('joinButton');
+const userIdentity = document.getElementById('user-identity');
+const currentUsernameSpan = document.getElementById('current-username');
 
 const sendButton = document.getElementById('sendButton');
 const messages = document.getElementById('messages');
-const usernameInput = document.getElementById('usernameInput');
 const messageInput = document.getElementById('messageInput');
 const usersList = document.getElementById('users');
+
+let miNombreUsuario = '';
 
 // ============================================
 // SANITIZACIÓN XSS EN CLIENTE (Defensa en profundidad)
@@ -66,40 +75,96 @@ socket.addEventListener('error', (event) => {
     document.body.insertBefore(errorMsg, document.body.firstChild);
 });
 
+/**
+ * Envía solicitud para unirse al chat
+ */
+function joinChat() {
+    const username = loginUsernameInput.value.trim();
+    if (username === '') return;
+
+    const joinData = {
+        tipo: 'join',
+        usuario: username
+    };
+
+    socket.send(JSON.stringify(joinData));
+    miNombreUsuario = username;
+}
+
+/**
+ * Envía un mensaje de chat normal
+ */
 function sendMessage() {
     const message = messageInput.value.trim();
-    const username = usernameInput.value.trim();
-
-    if (username === '' || message === '') {
-        return; // No enviar mensajes sin nombre de usuario o vacíos
-    }
+    if (message === '') return;
     
-    const messageData = { usuario: username, mensaje: message };
+    const messageData = { 
+        tipo: 'chat',
+        mensaje: message 
+    };
     
     socket.send(JSON.stringify(messageData));
-    console.log('Mensaje enviado al servidor:', message);
-    messageInput.value = ''; // Limpiar el campo de entrada después de enviar
-    usernameInput.disabled = true; // Deshabilitar el campo de nombre de usuario después de enviar el primer mensaje
+    messageInput.value = '';
 } 
 
+// Listeners de eventos
+joinButton.addEventListener('click', joinChat);
+loginUsernameInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') joinChat();
+});
+
 sendButton.addEventListener('click', sendMessage);
+messageInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendMessage();
+});
 
 socket.addEventListener('message', (event) => {
     const data = JSON.parse(event.data);
+    
+    // MANEJO SEGÚN TIPO DE MENSAJE
+    switch (data.tipo) {
+        case 'join-success':
+            // Ocultar login y mostrar chat
+            loginContainer.classList.add('hidden');
+            chatContainer.classList.remove('hidden');
+            
+            // Mostrar identidad del usuario
+            userIdentity.classList.remove('hidden');
+            currentUsernameSpan.textContent = miNombreUsuario;
+            
+            messageInput.focus();
+            console.log('🎉 Unido exitosamente como:', miNombreUsuario);
+            break;
+
+        case 'lista-usuarios':
+            actualizarListaUsuarios(data.usuarios);
+            break;
+
+        case 'error':
+            mostrarMensaje(data);
+            // Si el error ocurrió durante el join, no ocultamos el login
+            break;
+
+        default:
+            mostrarMensaje(data);
+            break;
+    }
+});
+
+function actualizarListaUsuarios(usuarios) {
+    usersList.innerHTML = '';
+    usuarios.forEach((usuario) => {
+        const userElement = document.createElement('li');
+        userElement.textContent = usuario;
+        const color = getUserColor(usuario);
+        userElement.style.borderLeftColor = color;
+        usersList.appendChild(userElement);
+    });
+}
+
+function mostrarMensaje(data) {
     const username = data.usuario || 'Anónimo';
     const messageText = data.mensaje; 
-
-    if (data.tipo === 'lista-usuarios') {
-        usersList.innerHTML = '';
-        data.usuarios.forEach((usuario) => {
-            const userElement = document.createElement('li');
-            userElement.textContent = usuario;
-            const color = getUserColor(usuario);
-            userElement.style.borderLeftColor = color;
-            usersList.appendChild(userElement);
-        });
-        return;
-    }
 
     const messageElement = document.createElement('div');
     const isServerMessage = username === 'Servidor';
@@ -147,7 +212,7 @@ socket.addEventListener('message', (event) => {
     
     messages.appendChild(messageElement);
     messages.scrollTop = messages.scrollHeight;
-});
+}
 
 /**
  * Formatea el timestamp ISO al formato local

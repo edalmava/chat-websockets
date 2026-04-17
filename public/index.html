@@ -9,7 +9,16 @@
 <body>
     <h1>Chat</h1>
     
-    <div id="chat-container">
+    <div id="login-container">
+        <div id="login-box">
+            <h2>Bienvenido</h2>
+            <p>Ingresa tu nombre para comenzar a chatear</p>
+            <input type="text" id="loginUsernameInput" placeholder="Tu nombre...">
+            <button id="joinButton">Entrar al Chat</button>
+        </div>
+    </div>
+
+    <div id="chat-container" class="hidden">
         <div id="chat-wrapper">
             <aside id="user-list">
                 <h2>Usuarios Conectados</h2>
@@ -17,10 +26,14 @@
             </aside>
             
             <main id="chat-main">
+                <div id="chat-header">
+                    <div id="user-identity" class="hidden">
+                        Conectado como: <strong id="current-username"></strong>
+                    </div>
+                </div>
                 <div id="messages"></div>
                 
                 <div id="input-area">
-                    <input type="text" id="usernameInput" placeholder="Tu nombre...">
                     <div id="message-input-wrapper">
                         <input type="text" id="messageInput" placeholder="Escribe tu mensaje...">
                         <button id="sendButton">Enviar</button>
