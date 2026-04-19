@@ -86,10 +86,16 @@ module.exports = function(wss, logger) {
         });
         
         ws.id = clientId;
+        ws.isAlive = true; // Para el Heartbeat
         ws.usuarioIdentificado = false;
         ws.nombreUsuario = null;
         ws.sala = null;
         ws.messageTimestamps = [];
+
+        // Registrar latido (pong)
+        ws.on('pong', () => {
+            ws.isAlive = true;
+        });
 
         ws.on('message', (message) => {
             try {
@@ -239,9 +245,24 @@ module.exports = function(wss, logger) {
         });
     });
 
-    // Reporte periódico
-    setInterval(() => {
+    // Reporte periódico y Heartbeat
+    const interval = setInterval(() => {
         const usuariosConectados = Array.from(wss.clients).filter(c => c.usuarioIdentificado).length;
         logger.log('INFO', 'stats_report', 'system', { usuariosActivos: usuariosConectados, totalConexiones: wss.clients.size });
+
+        // Verificar Heartbeat para cada cliente
+        wss.clients.forEach((ws) => {
+            if (ws.isAlive === false) {
+                logger.log('INFO', 'client_terminated_heartbeat', ws.id, { username: ws.nombreUsuario });
+                return ws.terminate();
+            }
+
+            ws.isAlive = false;
+            ws.ping(); // Envía un frame de ping (el navegador responderá automáticamente con pong)
+        });
     }, 30000);
+
+    wss.on('close', () => {
+        clearInterval(interval);
+    });
 };

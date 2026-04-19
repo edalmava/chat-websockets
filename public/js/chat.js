@@ -1,4 +1,7 @@
-const socket = new WebSocket('ws://localhost:8443');
+let socket = null;
+let reintentosConexion = 0;
+const MAX_REINTENTOS = 5;
+let reconexionTimeout = null;
 
 // Elementos del DOM
 const loginContainer = document.getElementById('login-container');
@@ -16,11 +19,103 @@ const usersList = document.getElementById('users');
 const roomListItems = document.querySelectorAll('#rooms li');
 const typingIndicator = document.getElementById('typing-indicator');
 
+// Banner de estado de conexión
+const statusBanner = document.createElement('div');
+statusBanner.id = 'connection-status';
+statusBanner.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 1000;
+    transition: all 0.3s ease;
+    display: none;
+`;
+document.body.appendChild(statusBanner);
+
 let miNombreUsuario = '';
 let salaActual = '';
 let estaEscribiendo = false;
 let typingTimeout = null;
 const usuariosEscribiendo = new Set();
+
+/**
+ * Determina la URL del servidor basada en el entorno
+ */
+function obtenerUrlServer() {
+    const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    return isDev ? 'ws://localhost:8443' : 'wss://chat.colsaba.site';
+}
+
+/**
+ * Muestra el estado de la conexión en el banner
+ */
+function actualizarStatusUI(mensaje, tipo = 'info') {
+    statusBanner.textContent = mensaje;
+    statusBanner.style.display = 'block';
+    
+    if (tipo === 'info') {
+        statusBanner.style.backgroundColor = '#dbeafe';
+        statusBanner.style.color = '#1e40af';
+    } else if (tipo === 'success') {
+        statusBanner.style.backgroundColor = '#dcfce7';
+        statusBanner.style.color = '#166534';
+        setTimeout(() => statusBanner.style.display = 'none', 3000);
+    } else if (tipo === 'error') {
+        statusBanner.style.backgroundColor = '#fee2e2';
+        statusBanner.style.color = '#991b1b';
+    }
+}
+
+/**
+ * Inicializa o reestablece la conexión WebSocket
+ */
+function conectar() {
+    const url = obtenerUrlServer();
+    console.log(`🔌 Intentando conectar a ${url}...`);
+    
+    if (socket) {
+        socket.close();
+    }
+
+    socket = new WebSocket(url);
+
+    socket.addEventListener('open', () => {
+        console.log('✅ Conexión establecida');
+        actualizarStatusUI('Conectado', 'success');
+        reintentosConexion = 0;
+        
+        // Si ya teníamos usuario y sala, re-unirse automáticamente
+        if (miNombreUsuario) {
+            console.log('🔄 Re-uniéndose automáticamente...');
+            joinChat(true);
+        }
+    });
+
+    socket.addEventListener('close', (event) => {
+        if (reintentosConexion < MAX_REINTENTOS) {
+            reintentosConexion++;
+            const delay = Math.min(1000 * Math.pow(2, reintentosConexion - 1), 10000);
+            actualizarStatusUI(`Desconectado. Reconectando (${reintentosConexion}/${MAX_REINTENTOS}) en ${delay/1000}s...`, 'error');
+            
+            reconexionTimeout = setTimeout(conectar, delay);
+        } else {
+            actualizarStatusUI('Error de conexión persistente. Por favor, recarga la página.', 'error');
+        }
+    });
+
+    socket.addEventListener('error', (event) => {
+        console.error('❌ Error de WebSocket:', event);
+    });
+
+    socket.addEventListener('message', manejarMensaje);
+}
+
+// Iniciar conexión inicial
+conectar();
 
 // ============================================
 // SANITIZACIÓN XSS EN CLIENTE (Defensa en profundidad)
@@ -65,28 +160,12 @@ function getUserColor(username) {
     return userColors[username];
 }
 
-socket.addEventListener('open', () => {
-    console.log('✅ Conexión WSS establecida con el servidor de forma segura');
-});
-
-socket.addEventListener('error', (event) => {
-    console.error('❌ Error de conexión WSS:', event);
-    const errorMsg = document.createElement('div');
-    errorMsg.style.cssText = 'background-color: #fee2e2; border: 1px solid #dc2626; color: #7f1d1d; padding: 12px; border-radius: 6px; margin-bottom: 10px';
-    errorMsg.innerHTML = `
-        <strong>⚠️ Error de conexión:</strong><br>
-        Si ves un error de certificado, es normal (certificado auto-firmado para desarrollo).<br>
-        Abre el navegador devtools (F12) y acepta la excepción de seguridad.
-    `;
-    document.body.insertBefore(errorMsg, document.body.firstChild);
-});
-
 /**
  * Envía solicitud para unirse al chat
  */
-function joinChat() {
+function joinChat(esReconexion = false) {
     const username = miNombreUsuario || loginUsernameInput.value.trim();
-    const room = loginRoomSelect.value;
+    const room = salaActual || loginRoomSelect.value;
     
     if (username === '') return;
 
@@ -96,8 +175,10 @@ function joinChat() {
         sala: room
     };
 
-    socket.send(JSON.stringify(joinData));
-    miNombreUsuario = username;
+    if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(joinData));
+        miNombreUsuario = username;
+    }
 }
 
 /**
@@ -112,7 +193,9 @@ function cambiarSala(nuevaSala) {
         sala: nuevaSala
     };
 
-    socket.send(JSON.stringify(joinData));
+    if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(joinData));
+    }
 }
 
 /**
@@ -120,7 +203,7 @@ function cambiarSala(nuevaSala) {
  */
 function sendMessage() {
     const message = messageInput.value.trim();
-    if (message === '') return;
+    if (message === '' || socket.readyState !== WebSocket.OPEN) return;
     
     detenerNotificacionEscritura();
 
@@ -137,7 +220,7 @@ function sendMessage() {
  * Notifica al servidor el estado de escritura
  */
 function enviarEstadoEscritura(escribiendo) {
-    if (estaEscribiendo === escribiendo) return;
+    if (estaEscribiendo === escribiendo || socket.readyState !== WebSocket.OPEN) return;
     estaEscribiendo = escribiendo;
 
     socket.send(JSON.stringify({
@@ -155,7 +238,7 @@ function detenerNotificacionEscritura() {
 }
 
 // Listeners de eventos
-joinButton.addEventListener('click', joinChat);
+joinButton.addEventListener('click', () => joinChat());
 loginUsernameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') joinChat();
 });
@@ -184,7 +267,7 @@ messageInput.addEventListener('input', () => {
     }, 2000);
 });
 
-socket.addEventListener('message', (event) => {
+function manejarMensaje(event) {
     const data = JSON.parse(event.data);
     
     switch (data.tipo) {
@@ -231,7 +314,7 @@ socket.addEventListener('message', (event) => {
             mostrarMensaje(data);
             break;
     }
-});
+}
 
 function manejarIndicadorEscritura(usuario, escribiendo) {
     if (escribiendo) {
