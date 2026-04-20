@@ -162,6 +162,14 @@ module.exports = function(wss, logger) {
                                 enviarError(ws, validUser.error);
                                 return;
                             }
+
+                            // Verificar si el nombre ya está en uso
+                            if (usuariosConectados.has(validUser.usuario)) {
+                                logger.log('WARNING', 'duplicate_username_attempt', clientId, { username: validUser.usuario });
+                                enviarError(ws, 'El nombre de usuario ya está en uso. Por favor, elige otro.');
+                                return;
+                            }
+
                             ws.nombreUsuario = validUser.usuario;
                             ws.usuarioIdentificado = true;
                             logger.log('INFO', 'user_identified', clientId, { username: ws.nombreUsuario });
@@ -197,7 +205,7 @@ module.exports = function(wss, logger) {
                         // Notificar a la nueva sala
                         broadcastMessage({ 
                             usuario: 'Servidor', 
-                            mensaje: `El usuario "${ws.nombreUsuario}" se ha unido a la sala: ${nuevaSala}`,
+                            mensaje: `El usuario ${ws.nombreUsuario} se ha unido a la sala: ${nuevaSala}`,
                             tipo: 'sistema',
                             timestamp: new Date().toISOString()
                         }, nuevaSala);

@@ -34,16 +34,27 @@ function sanitizeHtml(text) {
 }
 
 /**
- * Sanitiza recursivamente un objeto (usuario y mensaje)
+ * Sanitiza recursivamente un objeto, arreglo o cadena
+ * Limpia cualquier propiedad de tipo string para prevenir XSS
  */
-function sanitizeObject(obj) {
-    if (typeof obj !== 'object' || obj === null) return obj;
+function sanitizeObject(data) {
+    if (typeof data === 'string') {
+        return sanitizeHtml(data);
+    }
     
-    const sanitized = { ...obj };
-    if (sanitized.usuario) sanitized.usuario = sanitizeHtml(sanitized.usuario);
-    if (sanitized.mensaje) sanitized.mensaje = sanitizeHtml(sanitized.mensaje);
+    if (Array.isArray(data)) {
+        return data.map(item => sanitizeObject(item));
+    }
     
-    return sanitized;
+    if (typeof data === 'object' && data !== null) {
+        const sanitized = {};
+        for (const [key, value] of Object.entries(data)) {
+            sanitized[key] = sanitizeObject(value);
+        }
+        return sanitized;
+    }
+    
+    return data;
 }
 
 module.exports = {

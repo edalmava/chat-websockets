@@ -109,12 +109,36 @@ function sendMessage() {
     if (!message || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ tipo: 'chat', mensaje: message }));
     messageInput.value = '';
+    
+    // Resetear estado de escritura al enviar
+    if (estaEscribiendo) {
+        estaEscribiendo = false;
+        socket.send(JSON.stringify({ tipo: 'typing', escribiendo: false }));
+    }
 }
 
 // LISTENERS
 joinButton.addEventListener('click', () => joinChat());
 sendButton.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => e.key === 'Enter' && sendMessage());
+
+// Emisor de "Está escribiendo..."
+messageInput.addEventListener('input', () => {
+    if (!estaEscribiendo && socket.readyState === WebSocket.OPEN) {
+        estaEscribiendo = true;
+        socket.send(JSON.stringify({ tipo: 'typing', escribiendo: true }));
+    }
+
+    // Debounce para dejar de escribir
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        if (estaEscribiendo && socket.readyState === WebSocket.OPEN) {
+            estaEscribiendo = false;
+            socket.send(JSON.stringify({ tipo: 'typing', escribiendo: false }));
+        }
+    }, 2000);
+});
+
 p2pSendButton.addEventListener('click', sendP2PMessage);
 p2pMessageInput.addEventListener('keypress', (e) => e.key === 'Enter' && sendP2PMessage());
 closeP2PButton.addEventListener('click', () => { p2pModal.classList.add('hidden'); activeP2PUser = null; });
@@ -132,12 +156,42 @@ function manejarMensaje(event) {
         case 'lista-usuarios':
             actualizarListaUsuarios(data.usuarios);
             break;
+        case 'user-typing':
+            if (data.escribiendo) {
+                usuariosEscribiendo.add(data.usuario);
+            } else {
+                usuariosEscribiendo.delete(data.usuario);
+            }
+            actualizarIndicadorEscritura();
+            break;
         case 'webrtc-signal':
             manejarSenalWebRTC(data.de, data.data);
             break;
         default:
+            if (data.tipo === 'error') {
+                actualizarStatusUI(data.mensaje, 'error');
+            }
             mostrarMensaje(data);
             break;
+    }
+}
+
+function actualizarIndicadorEscritura() {
+    if (usuariosEscribiendo.size === 0) {
+        typingIndicator.classList.add('hidden');
+        typingIndicator.textContent = '';
+    } else {
+        const lista = Array.from(usuariosEscribiendo);
+        let texto = '';
+        if (lista.length === 1) {
+            texto = `${lista[0]} está escribiendo...`;
+        } else if (lista.length === 2) {
+            texto = `${lista[0]} y ${lista[1]} están escribiendo...`;
+        } else {
+            texto = 'Varios usuarios están escribiendo...';
+        }
+        typingIndicator.textContent = texto;
+        typingIndicator.classList.remove('hidden');
     }
 }
 
@@ -322,10 +376,23 @@ function mostrarMensajeEnVentana(usuario, texto, clase) {
 }
 
 function mostrarMensaje(data) {
+    // Si no hay mensaje ni es un error/sistema, ignorar para evitar bloques vacíos
+    if (!data.mensaje && data.tipo !== 'error' && data.tipo !== 'sistema') {
+        return;
+    }
+
     const div = document.createElement('div');
     div.className = data.tipo === 'error' ? 'error-message' : (data.tipo === 'sistema' ? 'server-message' : 'user-message');
-    const color = getUserColor(data.usuario || 'Anónimo');
-    div.innerHTML = `<div class="username" style="color:${color}">${data.usuario || ''}</div><div>${data.mensaje}</div>`;
+    
+    const usuario = data.usuario || 'Anónimo';
+    const mensaje = data.mensaje || '';
+    const color = getUserColor(usuario);
+    
+    // Sanitizar explícitamente antes de insertar en innerHTML
+    const safeUser = sanitizeHtml(usuario);
+    const safeMsg = sanitizeHtml(mensaje);
+    
+    div.innerHTML = `<div class="username" style="color:${color}">${safeUser}</div><div>${safeMsg}</div>`;
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
 }

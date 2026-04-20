@@ -21,7 +21,7 @@ function validarUsuario(usuario) {
         };
     }
 
-    if (!/^[a-zA-Z0-9\s\-_.@áéíóúÁÉÍÓÚñÑ]+$/.test(usuario)) {
+    if (!/^[\p{L}\p{N}\s\-_.@]+$/u.test(usuario)) {
         return { válido: false, error: 'El nombre contiene caracteres inválidos' };
     }
 
