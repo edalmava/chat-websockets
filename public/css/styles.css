@@ -203,6 +203,13 @@ h2 {
 }
 
 /* Reutilizar estilos de lista de usuarios para el nuevo sidebar */
+.sidebar-hint {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    font-style: italic;
+}
+
 #user-list li {
     padding: 10px 12px;
     background: white;
@@ -214,6 +221,7 @@ h2 {
     transition: all 0.2s ease;
     box-shadow: var(--shadow-sm);
     position: relative;
+    cursor: pointer;
 }
 
 #user-list li::before {
@@ -233,6 +241,146 @@ h2 {
     background: #f0f9ff;
     transform: translateX(4px);
     box-shadow: var(--shadow-md);
+}
+
+/* ============================================
+   MODAL P2P
+   ============================================ */
+#p2p-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    backdrop-filter: blur(4px);
+}
+
+#p2p-window {
+    background: white;
+    width: 90%;
+    max-width: 500px;
+    height: 500px;
+    border-radius: 16px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#p2p-header {
+    padding: 15px 20px;
+    background: var(--primary-color);
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#p2p-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.p2p-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+#p2p-status {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.status-connecting { color: #fef08a; }
+.status-open { color: #bbf7d0; font-weight: bold; }
+.status-closed { color: #fecaca; }
+
+#closeP2P {
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    box-shadow: none;
+    text-transform: none;
+}
+
+#closeP2P:hover {
+    transform: scale(1.2);
+    background: transparent;
+}
+
+#p2p-messages {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#p2p-input-area {
+    padding: 15px;
+    border-top: 1px solid var(--border-color);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+}
+
+#p2pMessageInput {
+    padding: 10px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+#p2pSendButton {
+    margin: 0;
+}
+
+.p2p-msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    position: relative;
+    box-shadow: var(--shadow-sm);
+}
+
+.p2p-msg-me {
+    align-self: flex-end;
+    background: var(--primary-color);
+    color: white;
+    border-bottom-right-radius: 2px;
+}
+
+.p2p-msg-them {
+    align-self: flex-start;
+    background: white;
+    color: var(--text-primary);
+    border-bottom-left-radius: 2px;
+    border: 1px solid var(--border-color);
+}
+
+.p2p-msg-time {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    margin-top: 4px;
+    display: block;
+    text-align: right;
 }
 
 /* ============================================
@@ -530,6 +678,93 @@ button:hover {
 button:active {
     transform: translateY(0);
     box-shadow: var(--shadow-sm);
+}
+
+#p2p-active-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+#p2p-active-list li {
+    padding: 10px 12px;
+    background: white;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    border-left: 3px solid var(--success-color);
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+}
+
+#p2p-active-list li:hover {
+    transform: translateX(4px);
+    background: #f0fdf4;
+}
+
+.unread-badge {
+    background: #ef4444;
+    color: white;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: bold;
+}
+
+/* ============================================
+   NOTIFICACIONES (Toast)
+   ============================================ */
+#notifications-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 3000;
+}
+
+.toast {
+    background: white;
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: var(--shadow-lg);
+    border-left: 4px solid var(--primary-color);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 250px;
+    animation: slideInRight 0.3s ease;
+}
+
+.toast-content {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.toast-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.toast-btn {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    text-transform: none;
+}
+
+.toast-btn-reject {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+@keyframes slideInRight {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
 }
 
 /* ============================================

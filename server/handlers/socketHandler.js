@@ -12,6 +12,10 @@ module.exports = function(wss, logger) {
     // Map<NombreSala, Set<Websocket>>
     const salas = new Map();
 
+    // REGISTRO GLOBAL DE USUARIOS (Para señalización P2P)
+    // Map<NombreUsuario, Websocket>
+    const usuariosConectados = new Map();
+
     /**
      * Añade un cliente a una sala en el índice
      */
@@ -43,13 +47,13 @@ module.exports = function(wss, logger) {
         const salaSet = salas.get(sala);
         if (!salaSet) return;
 
-        const usuariosConectados = Array.from(salaSet)
+        const usuariosEnSala = Array.from(salaSet)
             .filter(client => client.usuarioIdentificado)
             .map(client => client.nombreUsuario);   
         
         broadcastMessage({ 
             tipo: 'lista-usuarios', 
-            usuarios: usuariosConectados,
+            usuarios: usuariosEnSala,
             timestamp: new Date().toISOString()
         }, sala);
     }
@@ -181,6 +185,9 @@ module.exports = function(wss, logger) {
                         ws.sala = nuevaSala;
                         agregarASala(ws, nuevaSala);
                         
+                        // Registrar en el mapa global para señalización WebRTC
+                        usuariosConectados.set(ws.nombreUsuario, ws);
+
                         // Confirmar éxito al cliente
                         ws.send(JSON.stringify({ 
                             tipo: 'join-success',
@@ -258,6 +265,21 @@ module.exports = function(wss, logger) {
                         }
                         break;
 
+                    case 'webrtc-signal':
+                        if (!ws.usuarioIdentificado) return;
+                        
+                        const destinatario = messageData.para;
+                        const targetWs = usuariosConectados.get(destinatario);
+
+                        if (targetWs && targetWs.readyState === Websocket.OPEN) {
+                            targetWs.send(JSON.stringify({
+                                tipo: 'webrtc-signal',
+                                de: ws.nombreUsuario,
+                                data: messageData.data
+                            }));
+                        }
+                        break;
+
                     default:
                         logger.log('WARNING', 'unknown_message_type', clientId, { tipo: messageData.tipo });
                         enviarError(ws, 'Tipo de mensaje desconocido');
@@ -273,6 +295,11 @@ module.exports = function(wss, logger) {
             if (ws.usuarioIdentificado) {
                 logger.log('INFO', 'user_disconnection', clientId, { username: ws.nombreUsuario, totalConexiones: wss.clients.size - 1 });
                 
+                // Limpiar del registro global
+                if (ws.nombreUsuario) {
+                    usuariosConectados.delete(ws.nombreUsuario);
+                }
+
                 if (ws.sala) {
                     quitarDeSala(ws, ws.sala);
                     broadcastMessage({ 
@@ -294,8 +321,8 @@ module.exports = function(wss, logger) {
 
     // Reporte periódico y Heartbeat
     const interval = setInterval(() => {
-        const usuariosConectados = Array.from(wss.clients).filter(c => c.usuarioIdentificado).length;
-        logger.log('INFO', 'stats_report', 'system', { usuariosActivos: usuariosConectados, totalConexiones: wss.clients.size });
+        const usuariosIdentificados = Array.from(wss.clients).filter(c => c.usuarioIdentificado).length;
+        logger.log('INFO', 'stats_report', 'system', { usuariosActivos: usuariosIdentificados, totalConexiones: wss.clients.size });
 
         // Verificar Heartbeat para cada cliente
         wss.clients.forEach((ws) => {
@@ -305,7 +332,7 @@ module.exports = function(wss, logger) {
             }
 
             ws.isAlive = false;
-            ws.ping(); // Envía un frame de ping (el navegador responderá automáticamente con pong)
+            ws.ping(); // Envía un frame de ping
         });
     }, 30000);
 

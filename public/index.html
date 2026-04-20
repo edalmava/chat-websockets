@@ -38,7 +38,12 @@
                 </section>
                 <section id="user-list">
                     <h2>Usuarios en Sala</h2>
+                    <p class="sidebar-hint">Haz clic en un usuario para chat privado P2P</p>
                     <ul id="users"></ul>
+                </section>
+                <section id="p2p-list-section" class="hidden">
+                    <h2>Chats P2P Activos</h2>
+                    <ul id="p2p-active-list"></ul>
                 </section>
             </aside>
             
@@ -61,6 +66,25 @@
         </div>
     </div>
 
+    <!-- Modal para Chat Privado P2P -->
+    <div id="p2p-modal" class="hidden">
+        <div id="p2p-window">
+            <div id="p2p-header">
+                <h3>Chat Privado P2P: <span id="p2p-target-name"></span></h3>
+                <div class="p2p-controls">
+                    <span id="p2p-status" class="status-connecting">Conectando...</span>
+                    <button id="closeP2P">×</button>
+                </div>
+            </div>
+            <div id="p2p-messages"></div>
+            <div id="p2p-input-area">
+                <input type="text" id="p2pMessageInput" placeholder="Escribe un mensaje privado P2P...">
+                <button id="p2pSendButton">Enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="notifications-container"></div>
     <script src="js/chat.js"></script>
 </body>
 </html>
