@@ -8,12 +8,43 @@ const { validarUsuario, validarMensaje, verificarRateLimit } = require('../utils
 
 module.exports = function(wss, logger) {
 
+    // ÍNDICE DE SALAS PARA ESCALABILIDAD
+    // Map<NombreSala, Set<Websocket>>
+    const salas = new Map();
+
+    /**
+     * Añade un cliente a una sala en el índice
+     */
+    function agregarASala(ws, nombreSala) {
+        if (!salas.has(nombreSala)) {
+            salas.set(nombreSala, new Set());
+        }
+        salas.get(nombreSala).add(ws);
+    }
+
+    /**
+     * Elimina un cliente de una sala en el índice
+     */
+    function quitarDeSala(ws, nombreSala) {
+        if (salas.has(nombreSala)) {
+            const salaSet = salas.get(nombreSala);
+            salaSet.delete(ws);
+            // Limpiar la sala del Map si queda vacía
+            if (salaSet.size === 0) {
+                salas.delete(nombreSala);
+            }
+        }
+    }
+
     /**
      * Envía la lista de usuarios conectados a todos los clientes de una sala específica
      */
     function enviarListaUsuarios(sala) {
-        const usuariosConectados = Array.from(wss.clients)
-            .filter(client => client.usuarioIdentificado && client.sala === sala)
+        const salaSet = salas.get(sala);
+        if (!salaSet) return;
+
+        const usuariosConectados = Array.from(salaSet)
+            .filter(client => client.usuarioIdentificado)
             .map(client => client.nombreUsuario);   
         
         broadcastMessage({ 
@@ -31,14 +62,21 @@ module.exports = function(wss, logger) {
             const sanitized = sanitizeObject(obj);
             const data = JSON.stringify(sanitized);
             
-            wss.clients.forEach((client) => {
-                if (client.readyState === Websocket.OPEN) {     
-                    // Si se especifica sala, filtrar. Si no, enviar a todos.
-                    if (!sala || client.sala === sala) {
+            // OPTIMIZACIÓN: Si hay sala, usar el índice. Si no, recorrer todos.
+            if (sala && salas.has(sala)) {
+                salas.get(sala).forEach((client) => {
+                    if (client.readyState === Websocket.OPEN) {     
                         client.send(data);
                     }
-                }   
-            });
+                });
+            } else if (!sala) {
+                // Caso global (broadcast a todo el servidor)
+                wss.clients.forEach((client) => {
+                    if (client.readyState === Websocket.OPEN) {     
+                        client.send(data);
+                    }   
+                });
+            }
         } catch (error) {
             logger.log('ERROR', 'broadcast_error', 'system', {
                 errorMsg: error.message
@@ -128,8 +166,9 @@ module.exports = function(wss, logger) {
                         // Asignar nueva sala
                         const nuevaSala = messageData.sala || 'General';
                         
-                        // Si cambia de sala, notificar salida de la antigua
+                        // Si cambia de sala, notificar salida de la antigua y actualizar índice
                         if (antiguaSala && antiguaSala !== nuevaSala) {
+                            quitarDeSala(ws, antiguaSala);
                             broadcastMessage({
                                 usuario: 'Servidor',
                                 mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
@@ -138,7 +177,9 @@ module.exports = function(wss, logger) {
                             }, antiguaSala);
                         }
 
+                        // Actualizar estado del socket e índice de salas
                         ws.sala = nuevaSala;
+                        agregarASala(ws, nuevaSala);
                         
                         // Confirmar éxito al cliente
                         ws.send(JSON.stringify({ 
@@ -183,7 +224,7 @@ module.exports = function(wss, logger) {
                             return;
                         }
 
-                        // Enviar solo a la sala actual
+                        // Enviar solo a la sala actual (usará el Map de salas)
                         broadcastMessage({
                             usuario: ws.nombreUsuario,
                             mensaje: validMsg.mensaje,
@@ -198,18 +239,23 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'typing':
-                        if (!ws.usuarioIdentificado) return;
+                        if (!ws.usuarioIdentificado || !ws.sala) return;
 
-                        // Retransmitir solo a los de la misma sala
-                        wss.clients.forEach((client) => {
-                            if (client !== ws && client.readyState === Websocket.OPEN && client.sala === ws.sala) {
-                                client.send(JSON.stringify({
-                                    tipo: 'user-typing',
-                                    usuario: ws.nombreUsuario,
-                                    escribiendo: messageData.escribiendo
-                                }));
-                            }
-                        });
+                        // Retransmitir solo a los de la misma sala usando el índice
+                        const salaTyping = salas.get(ws.sala);
+                        if (salaTyping) {
+                            const typingMsg = JSON.stringify({
+                                tipo: 'user-typing',
+                                usuario: ws.nombreUsuario,
+                                escribiendo: messageData.escribiendo
+                            });
+                            
+                            salaTyping.forEach((client) => {
+                                if (client !== ws && client.readyState === Websocket.OPEN) {
+                                    client.send(typingMsg);
+                                }
+                            });
+                        }
                         break;
 
                     default:
@@ -228,6 +274,7 @@ module.exports = function(wss, logger) {
                 logger.log('INFO', 'user_disconnection', clientId, { username: ws.nombreUsuario, totalConexiones: wss.clients.size - 1 });
                 
                 if (ws.sala) {
+                    quitarDeSala(ws, ws.sala);
                     broadcastMessage({ 
                         usuario: 'Servidor', 
                         mensaje: `El usuario "${ws.nombreUsuario}" se ha desconectado`,

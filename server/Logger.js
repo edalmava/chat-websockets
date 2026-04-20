@@ -23,6 +23,11 @@ class Logger {
         this.RETENTION_DAYS = 30;
         this.LOG_DIR = this._getLogDirectory();
 
+        // Configuración de Buffering
+        this.buffer = [];
+        this.MAX_BUFFER_SIZE = 50; // Vaciado automático al llegar a 50 mensajes
+        this.FLUSH_INTERVAL = 2000; // Vaciado automático cada 2 segundos
+
         // Asegurar que el directorio de logs existe
         this._ensureLogDirectory();
 
@@ -44,11 +49,15 @@ class Logger {
         // Inicia resumen de seguridad periódico (cada 30 segundos)
         this._setupSecuritySummary();
 
+        // Iniciar temporizador de vaciado de buffer
+        this._setupFlushTimer();
+
         // Escribir evento de inicio
         this.log('INFO', 'logger_initialized', 'system', {
             logDirectory: this.LOG_DIR,
             maxFileSize: `${(this.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`,
-            retentionDays: this.RETENTION_DAYS
+            retentionDays: this.RETENTION_DAYS,
+            buffering: 'enabled'
         });
     }
 
@@ -80,14 +89,52 @@ class Logger {
                 detalles: detalles
             };
 
-            // Verificar si necesita rotación
-            this._checkRotation();
-
-            // Escribir a archivo
+            // Escribir a buffer
             this._writeToFile(eventObj);
 
         } catch (error) {
             console.error(`❌ Error en Logger: ${error.message}`);
+        }
+    }
+
+    /**
+     * Vacía el buffer de logs al disco duro de forma asíncrona
+     */
+    flush() {
+        if (this.buffer.length === 0) return;
+
+        // Capturar buffer actual y limpiar para seguir recibiendo logs
+        const logsToWrite = [...this.buffer];
+        this.buffer = [];
+
+        // Verificar rotación antes de escribir el bloque
+        this._checkRotation();
+
+        const data = logsToWrite.join('\n') + '\n';
+
+        fs.appendFile(this.currentLogFile, data, (err) => {
+            if (err) {
+                console.error(`❌ Error persistiendo buffer de logs: ${err.message}`);
+                // En caso de error crítico, re-insertar logs al principio del buffer
+                this.buffer = [...logsToWrite, ...this.buffer];
+            }
+        });
+    }
+
+    /**
+     * Versión síncrona de flush para cierres del sistema
+     */
+    flushSync() {
+        if (this.buffer.length === 0) return;
+        
+        this._checkRotation();
+        const data = this.buffer.join('\n') + '\n';
+        
+        try {
+            fs.appendFileSync(this.currentLogFile, data);
+            this.buffer = [];
+        } catch (err) {
+            console.error(`❌ Error en flush síncrono: ${err.message}`);
         }
     }
 
@@ -227,12 +274,18 @@ class Logger {
                 fs.renameSync(this.currentLogFile, finalPath);
             }
 
-            // Loguear rotación
-            this.log('INFO', 'log_rotation', 'system', {
-                rotatedFile: path.basename(rotatedName),
-                reason: 'file_size_exceeded',
-                maxSize: `${(this.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`
-            });
+            // Loguear rotación (directamente al buffer)
+            this.buffer.push(JSON.stringify({
+                timestamp: new Date().toISOString(),
+                nivel: 'INFO',
+                evento: 'log_rotation',
+                clientId: 'system',
+                detalles: {
+                    rotatedFile: path.basename(rotatedName),
+                    reason: 'file_size_exceeded',
+                    maxSize: `${(this.MAX_FILE_SIZE / 1024 / 1024).toFixed(0)}MB`
+                }
+            }));
 
         } catch (error) {
             console.error(`❌ Error rotando archivo de log: ${error.message}`);
@@ -240,14 +293,18 @@ class Logger {
     }
 
     /**
-     * Escribe evento a archivo de log
+     * Escribe evento al buffer de logs
      */
     _writeToFile(eventObj) {
         try {
-            const jsonLine = JSON.stringify(eventObj);
-            fs.appendFileSync(this.currentLogFile, jsonLine + '\n');
+            this.buffer.push(JSON.stringify(eventObj));
+            
+            // Si el buffer supera el límite, vaciar inmediatamente
+            if (this.buffer.length >= this.MAX_BUFFER_SIZE) {
+                this.flush();
+            }
         } catch (error) {
-            console.error(`❌ Error escribiendo a log: ${error.message}`);
+            console.error(`❌ Error en buffer de log: ${error.message}`);
         }
     }
 
@@ -286,6 +343,15 @@ class Logger {
         setTimeout(() => {
             this.cleanupOldLogs();
         }, 5000);
+    }
+
+    /**
+     * Inicia el temporizador periódico de vaciado del buffer
+     */
+    _setupFlushTimer() {
+        setInterval(() => {
+            this.flush();
+        }, this.FLUSH_INTERVAL);
     }
 
     /**
@@ -354,5 +420,6 @@ class Logger {
         return `${days}d ${hours}h ${minutes}m`;
     }
 }
+
 
 module.exports = Logger;
