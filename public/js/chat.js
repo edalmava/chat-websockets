@@ -45,7 +45,16 @@ const usuariosEscribiendo = new Set();
 const p2pManager = new Map(); // Clave: usuario, Valor: { pc, dc, messages: [], unread: 0, status: '' }
 let activeP2PUser = null;
 
-const iceServers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const iceServers = {
+    iceServers: [
+        { urls: 'stun:stun.colsaba.site' },
+        { 
+            urls: 'turn:turn.colsaba.site',
+            username: 'edwin',
+            credential: 'edwin2026'
+        }
+    ]
+};
 
 function obtenerUrlServer() {
     const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -69,6 +78,11 @@ function conectar() {
         if (miNombreUsuario) joinChat(true);
     });
     socket.addEventListener('close', () => {
+        // Cerrar todas las conexiones P2P activas — el servidor ya no puede señalizar
+        p2pManager.forEach((conn, usuario) => {
+            cerrarConexionP2P(usuario, 'Desconectado del servidor');
+        });
+
         if (reintentosConexion < MAX_REINTENTOS) {
             reintentosConexion++;
             reconexionTimeout = setTimeout(conectar, 1000 * Math.pow(2, reintentosConexion));
@@ -211,6 +225,42 @@ function actualizarListaUsuarios(usuarios) {
 // LÓGICA MULTI-P2P
 // ============================================
 
+// Añadir esta función nueva
+function cerrarConexionP2P(usuario, motivo = 'Conexión cerrada') {
+    const conn = p2pManager.get(usuario);
+    if (!conn) return;
+
+    // Cerrar DataChannel si está abierto
+    if (conn.dc && conn.dc.readyState !== 'closed') {
+        conn.dc.close();
+    }
+
+    // Cerrar RTCPeerConnection — libera ICE, DTLS y todos los recursos de red
+    if (conn.pc && conn.pc.connectionState !== 'closed') {
+        conn.pc.close();
+    }
+
+    // Si el modal estaba mostrando este chat, notificar y bloquearlo
+    if (activeP2PUser === usuario) {
+        const div = document.createElement('div');
+        div.className = 'p2p-msg p2p-msg-them';
+        div.innerHTML = `<div class="p2p-msg-text" style="color:var(--text-muted);font-style:italic">
+            ⚠️ ${motivo}
+        </div>`;
+        p2pMessagesContainer.appendChild(div);
+        p2pMessagesContainer.scrollTop = p2pMessagesContainer.scrollHeight;
+
+        // Deshabilitar el input para que no se pueda escribir a un peer muerto
+        p2pMessageInput.disabled = true;
+        p2pMessageInput.placeholder = 'Conexión cerrada';
+        p2pSendButton.disabled = true;
+    }
+
+    // Eliminar del manager y actualizar sidebar
+    p2pManager.delete(usuario);
+    actualizarSidebarP2P();
+}
+
 async function abrirVentanaP2P(usuario) {
     if (!p2pManager.has(usuario)) {
         await iniciarConexionP2P(usuario);
@@ -219,6 +269,7 @@ async function abrirVentanaP2P(usuario) {
 }
 
 async function iniciarConexionP2P(usuario) {
+    console.log(`[WebRTC] Iniciando conexión con: ${usuario}`);
     const pc = new RTCPeerConnection(iceServers);
     const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...' };
     p2pManager.set(usuario, connection);
@@ -228,21 +279,54 @@ async function iniciarConexionP2P(usuario) {
     connection.dc = dc;
     configurarDC(usuario, dc);
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    enviarSenal(usuario, { tipo: 'offer', sdp: offer });
-    actualizarSidebarP2P();
+    try {
+        const offer = await pc.createOffer();
+        console.log(`[WebRTC] Oferta creada para ${usuario}`);
+        await pc.setLocalDescription(offer);
+        enviarSenal(usuario, { tipo: 'offer', sdp: offer });
+        actualizarSidebarP2P();
+    } catch (err) {
+        console.error(`[WebRTC] Error creando oferta para ${usuario}:`, err);
+    }
 }
 
 function configurarPC(usuario, pc) {
-    pc.onicecandidate = (e) => e.candidate && enviarSenal(usuario, { tipo: 'candidate', candidate: e.candidate });
+    pc.onicecandidate = (e) => {
+        if (e.candidate) {
+            console.log(`[WebRTC] Nuevo candidato ICE para ${usuario}:`, e.candidate.candidate);
+            enviarSenal(usuario, { tipo: 'candidate', candidate: e.candidate });
+        } else {
+            console.log(`[WebRTC] Fin de recolección de candidatos ICE para ${usuario}`);
+        }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log(`[WebRTC] Estado ICE con ${usuario}: ${pc.iceConnectionState}`);
+    };
+
+    pc.onicegatheringstatechange = () => {
+        console.log(`[WebRTC] Estado de recolección ICE: ${pc.iceGatheringState}`);
+    };
+
     pc.onconnectionstatechange = () => {
+        console.log(`[WebRTC] Estado de conexión con ${usuario}: ${pc.connectionState}`);
         const conn = p2pManager.get(usuario);
         if (!conn) return;
+
         conn.status = pc.connectionState;
         if (activeP2PUser === usuario) actualizarP2PUI(usuario);
+
+        if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+            const motivo = pc.connectionState === 'failed'
+                ? 'La conexión falló (posible bloqueo de firewall/NAT)'
+                : `${usuario} se ha desconectado`;
+            console.warn(`[WebRTC] Conexión terminal con ${usuario}: ${pc.connectionState}`);
+            cerrarConexionP2P(usuario, motivo);
+        }
     };
+
     pc.ondatachannel = (e) => {
+        console.log(`[WebRTC] Canal de datos recibido de ${usuario}`);
         const conn = p2pManager.get(usuario);
         if (conn) {
             conn.dc = e.channel;
@@ -252,11 +336,16 @@ function configurarPC(usuario, pc) {
 }
 
 function configurarDC(usuario, dc) {
-    dc.onopen = () => actualizarSidebarP2P();
+    dc.onopen = () => {
+        console.log(`[WebRTC] Canal de datos ABIERTO con ${usuario}`);
+        actualizarSidebarP2P();
+    };
+    dc.onclose = () => console.log(`[WebRTC] Canal de datos CERRADO con ${usuario}`);
     dc.onmessage = (e) => recibirMensajeP2P(usuario, e.data);
 }
 
 async function manejarSenalWebRTC(de, senal) {
+    console.log(`[WebRTC] Señal recibida de ${de}:`, senal.tipo || 'candidate');
     if (senal.tipo === 'offer' && !p2pManager.has(de)) {
         mostrarToastInvitacion(de, senal);
         return;
@@ -264,8 +353,21 @@ async function manejarSenalWebRTC(de, senal) {
     const conn = p2pManager.get(de);
     if (!conn) return;
 
-    if (senal.tipo === 'answer') await conn.pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
-    else if (senal.tipo === 'candidate') await conn.pc.addIceCandidate(new RTCIceCandidate(senal.candidate));
+    try {
+        if (senal.tipo === 'answer') {
+            await conn.pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
+            console.log(`[WebRTC] Answer procesado para ${de}`);
+        } else if (senal.tipo === 'candidate')  {
+            if (!conn.pc.remoteDescription) {
+                console.warn(`[WebRTC] Candidato ignorado (sin remoteDescription) para ${de}`);
+                return;
+            }
+            await conn.pc.addIceCandidate(new RTCIceCandidate(senal.candidate));
+            console.log(`[WebRTC] Candidato ICE añadido para ${de}`);
+        }
+    } catch (err) {
+        console.error(`[WebRTC] Error procesando señal de ${de}:`, err);
+    }
 }
 
 function mostrarToastInvitacion(usuario, senal) {
@@ -287,21 +389,35 @@ function mostrarToastInvitacion(usuario, senal) {
     container.appendChild(toast);
 
     document.getElementById(`accept-${usuario}`).onclick = async () => {
+        console.log(`[WebRTC] Aceptando invitación de ${usuario}`);
         const pc = new RTCPeerConnection(iceServers);
         const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...' };
         p2pManager.set(usuario, connection);
         configurarPC(usuario, pc);
         
-        await pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        enviarSenal(usuario, { tipo: 'answer', sdp: answer });
-        
-        toast.remove();
-        actualizarSidebarP2P();
-        conmutarChatP2P(usuario);
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            enviarSenal(usuario, { tipo: 'answer', sdp: answer });
+            console.log(`[WebRTC] Answer enviado a ${usuario}`);
+            
+            toast.remove();
+            actualizarSidebarP2P();
+            conmutarChatP2P(usuario);
+        } catch (err) {
+            console.error(`[WebRTC] Error al aceptar invitación de ${usuario}:`, err);
+            cerrarConexionP2P(usuario, 'Error al establecer conexión');
+        }
     };
-    document.getElementById(`reject-${usuario}`).onclick = () => toast.remove();
+    // Después — quita el toast Y cierra cualquier PC parcialmente creada
+    document.getElementById(`reject-${usuario}`).onclick = () => {
+        toast.remove();
+        // Si por algún race condition ya se creó una PC para este usuario, limpiarla
+        if (p2pManager.has(usuario)) {
+            cerrarConexionP2P(usuario, 'Invitación rechazada');
+        }
+    };
 }
 
 function enviarSenal(para, data) {
@@ -311,9 +427,10 @@ function enviarSenal(para, data) {
 function recibirMensajeP2P(usuario, texto) {
     const conn = p2pManager.get(usuario);
     if (!conn) return;
+    const time = new Date();
     conn.messages.push({ de: usuario, texto, time: new Date() });
     if (activeP2PUser === usuario) {
-        mostrarMensajeEnVentana(usuario, texto, 'them');
+        mostrarMensajeEnVentana(usuario, texto, 'them', time);
     } else {
         conn.unread++;
         actualizarSidebarP2P();
@@ -325,9 +442,10 @@ function sendP2PMessage() {
     if (!texto || !activeP2PUser) return;
     const conn = p2pManager.get(activeP2PUser);
     if (conn && conn.dc && conn.dc.readyState === 'open') {
+        const time = new Date(); 
         conn.dc.send(texto);
         conn.messages.push({ de: 'Tú', texto, time: new Date() });
-        mostrarMensajeEnVentana('Tú', texto, 'me');
+        mostrarMensajeEnVentana('Tú', texto, 'me', time);
         p2pMessageInput.value = '';
     }
 }
@@ -339,10 +457,16 @@ function conmutarChatP2P(usuario) {
     conn.unread = 0;
     p2pModal.classList.remove('hidden');
     p2pTargetNameSpan.textContent = usuario;
-    p2pMessagesContainer.innerHTML = '';
-    conn.messages.forEach(m => mostrarMensajeEnVentana(m.de, m.texto, m.de === 'Tú' ? 'me' : 'them'));
+    p2pMessagesContainer.innerHTML = '';    
+    conn.messages.forEach(m => mostrarMensajeEnVentana(m.de, m.texto, m.de === 'Tú' ? 'me' : 'them', m.time));
     actualizarP2PUI(usuario);
     actualizarSidebarP2P();
+
+    // Rehabilitar input — puede venir deshabilitado de un chat anterior cerrado
+    p2pMessageInput.disabled = false;
+    p2pMessageInput.placeholder = 'Escribe un mensaje privado P2P...';
+    p2pSendButton.disabled = false;
+
     p2pMessageInput.focus();
 }
 
@@ -367,32 +491,60 @@ function actualizarSidebarP2P() {
     });
 }
 
-function mostrarMensajeEnVentana(usuario, texto, clase) {
+function mostrarMensajeEnVentana(usuario, texto, clase, timestamp = null) {
     const div = document.createElement('div');
     div.className = `p2p-msg p2p-msg-${clase}`;
-    div.innerHTML = `<div class="p2p-msg-text">${sanitizeHtml(texto)}</div>`;
+
+    const fecha = timestamp ? new Date(timestamp) : new Date();
+    const hora = fecha.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    div.innerHTML = `
+        <div class="p2p-msg-text">${sanitizeHtml(texto)}</div>
+        <span class="p2p-msg-time">${hora}</span>
+    `;
     p2pMessagesContainer.appendChild(div);
     p2pMessagesContainer.scrollTop = p2pMessagesContainer.scrollHeight;
 }
 
 function mostrarMensaje(data) {
-    // Si no hay mensaje ni es un error/sistema, ignorar para evitar bloques vacíos
     if (!data.mensaje && data.tipo !== 'error' && data.tipo !== 'sistema') {
         return;
     }
 
     const div = document.createElement('div');
-    div.className = data.tipo === 'error' ? 'error-message' : (data.tipo === 'sistema' ? 'server-message' : 'user-message');
-    
     const usuario = data.usuario || 'Anónimo';
     const mensaje = data.mensaje || '';
     const color = getUserColor(usuario);
-    
-    // Sanitizar explícitamente antes de insertar en innerHTML
     const safeUser = sanitizeHtml(usuario);
     const safeMsg = sanitizeHtml(mensaje);
-    
-    div.innerHTML = `<div class="username" style="color:${color}">${safeUser}</div><div>${safeMsg}</div>`;
+
+    // Formatear timestamp si viene del servidor, o usar hora local
+    const fecha = data.timestamp ? new Date(data.timestamp) : new Date();
+    const hora = fecha.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (data.tipo === 'error') {
+        div.className = 'error-message';
+        div.innerHTML = `
+            <span class="error-icon">⚠</span>
+            <span class="error-text">${safeMsg}</span>
+        `;
+    } else if (data.tipo === 'sistema') {
+        div.className = 'server-message';
+        div.innerHTML = `
+            <span class="system-icon">ℹ</span>
+            <span class="system-text">${safeMsg}</span>
+        `;
+    } else {
+        div.className = 'user-message';
+        // Aplicar el color del usuario como variable CSS para el borde izquierdo
+        div.style.setProperty('--user-color', color);
+        div.innerHTML = `
+            <div class="username" style="color:${color}">${safeUser}</div>
+            <div class="message-text">${safeMsg}</div>
+            <div class="message-time">${hora}</div>
+        `;
+    }
+
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
 }
