@@ -241,6 +241,7 @@ module.exports = function(wss, logger) {
 
                         // Enviar solo a la sala actual (usará el Map de salas)
                         broadcastMessage({
+                            tipo: 'chat',
                             usuario: ws.nombreUsuario,
                             mensaje: validMsg.mensaje,
                             timestamp: new Date().toISOString()
@@ -261,8 +262,8 @@ module.exports = function(wss, logger) {
                         if (salaTyping) {
                             const typingMsg = JSON.stringify({
                                 tipo: 'user-typing',
-                                usuario: ws.nombreUsuario,
-                                escribiendo: messageData.escribiendo
+                                usuario: sanitizeHtml(ws.nombreUsuario),
+                                escribiendo: !!messageData.escribiendo
                             });
                             
                             salaTyping.forEach((client) => {

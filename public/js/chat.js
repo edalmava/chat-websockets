@@ -1,3 +1,5 @@
+/* Última modificación: 26-04-2026 06:39 p.m.*/
+
 let socket = null;
 let reintentosConexion = 0;
 const MAX_REINTENTOS = 5;
@@ -49,11 +51,11 @@ let p2pTypingTimeout = null;
 
 const iceServers = {
     iceServers: [
-        { urls: 'stun:stun.colsaba.site:3478' },
+        { urls: 'stun:stun.colsaba.site:5349' },
         { 
             urls: [
-                'turn:turn.colsaba.site:3478?transport=udp',
-                'turn:turn.colsaba.site:3478?transport=tcp'
+                'turn:turn.colsaba.site:5349?transport=udp',
+                'turn:turn.colsaba.site:5349?transport=tcp'
             ],
             username: 'edwin',
             credential: 'edwin2026'
