@@ -42,8 +42,10 @@ let typingTimeout = null;
 const usuariosEscribiendo = new Set();
 
 // GESTOR P2P MULTI-CHAT
-const p2pManager = new Map(); // Clave: usuario, Valor: { pc, dc, messages: [], unread: 0, status: '' }
+const p2pManager = new Map(); // Clave: usuario, Valor: { pc, dc, messages: [], unread: 0, status: '', typing: false }
 let activeP2PUser = null;
+let p2pEstaEscribiendo = false;
+let p2pTypingTimeout = null;
 
 const iceServers = {
     iceServers: [
@@ -159,10 +161,47 @@ messageInput.addEventListener('input', () => {
 
 p2pSendButton.addEventListener('click', sendP2PMessage);
 p2pMessageInput.addEventListener('keypress', (e) => e.key === 'Enter' && sendP2PMessage());
+
+// Emisor de "Está escribiendo..." para P2P
+p2pMessageInput.addEventListener('input', () => {
+    if (!activeP2PUser) return;
+    if (!p2pEstaEscribiendo) {
+        p2pEstaEscribiendo = true;
+        enviarPorDC(activeP2PUser, 'typing', { escribiendo: true });
+    }
+
+    clearTimeout(p2pTypingTimeout);
+    p2pTypingTimeout = setTimeout(() => {
+        if (p2pEstaEscribiendo) {
+            p2pEstaEscribiendo = false;
+            enviarPorDC(activeP2PUser, 'typing', { escribiendo: false });
+        }
+    }, 2000);
+});
+
 closeP2PButton.addEventListener('click', () => { p2pModal.classList.add('hidden'); activeP2PUser = null; });
+
+function enviarPorDC(usuario, tipo, payload) {
+    const conn = p2pManager.get(usuario);
+    if (conn && conn.dc && conn.dc.readyState === 'open') {
+        const data = JSON.stringify({
+            tipo,
+            payload,
+            timestamp: Date.now(),
+            id: Math.random().toString(36).substr(2, 9)
+        });
+        conn.dc.send(data);
+        return true;
+    }
+    return false;
+}
 
 function manejarMensaje(event) {
     const data = JSON.parse(event.data);
+    
+    // Validar que el mensaje tenga contenido o sea un tipo conocido antes de procesar
+    if (!data.tipo) return;
+
     switch (data.tipo) {
         case 'join-success':
             salaActual = data.sala;
@@ -185,11 +224,13 @@ function manejarMensaje(event) {
         case 'webrtc-signal':
             manejarSenalWebRTC(data.de, data.data);
             break;
-        default:
-            if (data.tipo === 'error') {
-                actualizarStatusUI(data.mensaje, 'error');
-            }
+        case 'chat':
+        case 'sistema':
+        case 'error':
             mostrarMensaje(data);
+            break;
+        default:
+            // Ignorar otros tipos de mensajes internos para evitar bloques vacíos
             break;
     }
 }
@@ -459,29 +500,72 @@ function enviarSenal(para, data) {
     socket.send(JSON.stringify({ tipo: 'webrtc-signal', para, data }));
 }
 
-function recibirMensajeP2P(usuario, texto) {
+function recibirMensajeP2P(usuario, dataRaw) {
     const conn = p2pManager.get(usuario);
     if (!conn) return;
-    const time = new Date();
-    conn.messages.push({ de: usuario, texto, time: new Date() });
-    if (activeP2PUser === usuario) {
-        mostrarMensajeEnVentana(usuario, texto, 'them', time);
-    } else {
-        conn.unread++;
-        actualizarSidebarP2P();
+
+    try {
+        const data = JSON.parse(dataRaw);
+        const time = data.timestamp ? new Date(data.timestamp) : new Date();
+
+        switch (data.tipo) {
+            case 'chat':
+                conn.messages.push({ de: usuario, texto: data.payload, time });
+                if (activeP2PUser === usuario) {
+                    mostrarMensajeEnVentana(usuario, data.payload, 'them', time);
+                    // Si estamos viendo el chat, enviar confirmación de lectura de inmediato
+                    enviarPorDC(usuario, 'seen', { id: data.id });
+                } else {
+                    conn.unread++;
+                    actualizarSidebarP2P();
+                }
+                break;
+            
+            case 'typing':
+                conn.typing = data.payload.escribiendo;
+                if (activeP2PUser === usuario) actualizarP2PUI(usuario);
+                break;
+
+            case 'seen':
+                // Opcional: Marcar mensaje con check azul en la UI
+                console.log(`[WebRTC] Mensaje ${data.payload.id} visto por ${usuario}`);
+                const ultimoMsg = conn.messages.filter(m => m.de === 'Tú').pop();
+                if (ultimoMsg && activeP2PUser === usuario) {
+                    // Podríamos añadir un indicador visual de "Visto"
+                    const tiempos = p2pMessagesContainer.querySelectorAll('.p2p-msg-me .p2p-msg-time');
+                    if (tiempos.length > 0) {
+                        const ultimoTime = tiempos[tiempos.length - 1];
+                        if (!ultimoTime.textContent.includes('✓✓')) {
+                            ultimoTime.textContent += ' ✓✓';
+                        }
+                    }
+                }
+                break;
+        }
+    } catch (e) {
+        console.error('[WebRTC] Error al parsear mensaje P2P:', e, dataRaw);
     }
 }
 
 function sendP2PMessage() {
     const texto = p2pMessageInput.value.trim();
     if (!texto || !activeP2PUser) return;
-    const conn = p2pManager.get(activeP2PUser);
-    if (conn && conn.dc && conn.dc.readyState === 'open') {
-        const time = new Date(); 
-        conn.dc.send(texto);
-        conn.messages.push({ de: 'Tú', texto, time: new Date() });
+    
+    const id = Math.random().toString(36).substr(2, 9);
+    const enviado = enviarPorDC(activeP2PUser, 'chat', texto);
+    
+    if (enviado) {
+        const time = new Date();
+        const conn = p2pManager.get(activeP2PUser);
+        conn.messages.push({ de: 'Tú', texto, time });
         mostrarMensajeEnVentana('Tú', texto, 'me', time);
         p2pMessageInput.value = '';
+        
+        // Resetear escritura al enviar
+        if (p2pEstaEscribiendo) {
+            p2pEstaEscribiendo = false;
+            enviarPorDC(activeP2PUser, 'typing', { escribiendo: false });
+        }
     }
 }
 
@@ -497,7 +581,13 @@ function conmutarChatP2P(usuario) {
     actualizarP2PUI(usuario);
     actualizarSidebarP2P();
 
-    // Rehabilitar input — puede venir deshabilitado de un chat anterior cerrado
+    // Enviar confirmación de lectura para el último mensaje recibido
+    const ultimoMensajeRecibido = conn.messages.filter(m => m.de !== 'Tú').pop();
+    if (ultimoMensajeRecibido) {
+        enviarPorDC(usuario, 'seen', { id: 'all' });
+    }
+
+    // Rehabilitar input
     p2pMessageInput.disabled = false;
     p2pMessageInput.placeholder = 'Escribe un mensaje privado P2P...';
     p2pSendButton.disabled = false;
@@ -509,8 +599,14 @@ function actualizarP2PUI(usuario) {
     const conn = p2pManager.get(usuario);
     if (!conn) return;
     const status = conn.status ? conn.status.toLowerCase() : '';
-    p2pStatusSpan.textContent = conn.status || 'Desconocido';
-    p2pStatusSpan.className = (status === 'connected' || status === 'open') ? 'status-open' : 'status-connecting';
+    
+    if (conn.typing) {
+        p2pStatusSpan.textContent = 'escribiendo...';
+        p2pStatusSpan.className = 'status-typing';
+    } else {
+        p2pStatusSpan.textContent = conn.status || 'Desconocido';
+        p2pStatusSpan.className = (status === 'connected' || status === 'open') ? 'status-open' : 'status-connecting';
+    }
 }
 
 function actualizarSidebarP2P() {
