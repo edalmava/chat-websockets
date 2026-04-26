@@ -47,13 +47,17 @@ let activeP2PUser = null;
 
 const iceServers = {
     iceServers: [
-        { urls: 'stun:stun.colsaba.site' },
+        { urls: 'stun:stun.colsaba.site:3478' },
         { 
-            urls: 'turn:turn.colsaba.site',
+            urls: [
+                'turn:turn.colsaba.site:3478?transport=udp',
+                'turn:turn.colsaba.site:3478?transport=tcp'
+            ],
             username: 'edwin',
             credential: 'edwin2026'
         }
-    ]
+    ],
+    iceCandidatePoolSize: 10
 };
 
 function obtenerUrlServer() {
@@ -271,7 +275,7 @@ async function abrirVentanaP2P(usuario) {
 async function iniciarConexionP2P(usuario) {
     console.log(`[WebRTC] Iniciando conexión con: ${usuario}`);
     const pc = new RTCPeerConnection(iceServers);
-    const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...' };
+    const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...', candidateBuffer: [] };
     p2pManager.set(usuario, connection);
     
     configurarPC(usuario, pc);
@@ -293,10 +297,17 @@ async function iniciarConexionP2P(usuario) {
 function configurarPC(usuario, pc) {
     pc.onicecandidate = (e) => {
         if (e.candidate) {
+            if (e.candidate.candidate.includes('relay')) {
+                console.log(`[WebRTC] ✅ Candidato RELAY encontrado para ${usuario}. El servidor TURN está funcionando.`);
+            }
             console.log(`[WebRTC] Nuevo candidato ICE para ${usuario}:`, e.candidate.candidate);
             enviarSenal(usuario, { tipo: 'candidate', candidate: e.candidate });
         } else {
             console.log(`[WebRTC] Fin de recolección de candidatos ICE para ${usuario}`);
+            const hasRelay = pc.localDescription && pc.localDescription.sdp.includes('typ relay');
+            if (!hasRelay) {
+                console.warn(`[WebRTC] ⚠️ No se generaron candidatos RELAY para ${usuario}. Revisa la conexión al servidor TURN.`);
+            }
         }
     };
 
@@ -346,36 +357,61 @@ function configurarDC(usuario, dc) {
 
 async function manejarSenalWebRTC(de, senal) {
     console.log(`[WebRTC] Señal recibida de ${de}:`, senal.tipo || 'candidate');
+    
+    // Si es una oferta, pre-inicializar la conexión para no perder candidatos
     if (senal.tipo === 'offer' && !p2pManager.has(de)) {
+        console.log(`[WebRTC] Pre-inicializando conexión para oferta de ${de}`);
+        const pc = new RTCPeerConnection(iceServers);
+        const connection = { pc, dc: null, messages: [], unread: 0, status: 'Esperando...', candidateBuffer: [] };
+        p2pManager.set(de, connection);
+        configurarPC(de, pc);
         mostrarToastInvitacion(de, senal);
         return;
     }
+
     const conn = p2pManager.get(de);
-    if (!conn) return;
+    if (!conn) {
+        console.warn(`[WebRTC] Señal ignorada de ${de}: No hay conexión activa.`);
+        return;
+    }
 
     try {
         if (senal.tipo === 'answer') {
             await conn.pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
             console.log(`[WebRTC] Answer procesado para ${de}`);
+            vaciarBufferCandidatos(de);
         } else if (senal.tipo === 'candidate')  {
             if (!conn.pc.remoteDescription) {
-                console.warn(`[WebRTC] Candidato ignorado (sin remoteDescription) para ${de}`);
-                return;
+                console.log(`[WebRTC] Guardando candidato en buffer para ${de}`);
+                conn.candidateBuffer.push(senal.candidate);
+            } else {
+                await conn.pc.addIceCandidate(new RTCIceCandidate(senal.candidate));
+                console.log(`[WebRTC] Candidato ICE añadido para ${de}`);
             }
-            await conn.pc.addIceCandidate(new RTCIceCandidate(senal.candidate));
-            console.log(`[WebRTC] Candidato ICE añadido para ${de}`);
         }
     } catch (err) {
         console.error(`[WebRTC] Error procesando señal de ${de}:`, err);
     }
 }
 
+async function vaciarBufferCandidatos(usuario) {
+    const conn = p2pManager.get(usuario);
+    if (!conn || !conn.candidateBuffer.length) return;
+    
+    console.log(`[WebRTC] Procesando ${conn.candidateBuffer.length} candidatos del buffer para ${usuario}`);
+    for (const cand of conn.candidateBuffer) {
+        try {
+            await conn.pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (e) {
+            console.warn(`[WebRTC] Error al añadir candidato del buffer para ${usuario}`, e);
+        }
+    }
+    conn.candidateBuffer = [];
+}
+
 function mostrarToastInvitacion(usuario, senal) {
     const container = notificationsContainer || document.getElementById('notifications-container');
-    if (!container) {
-        console.error('Error: No se encontró el contenedor de notificaciones');
-        return;
-    }
+    if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = 'toast';
@@ -389,19 +425,18 @@ function mostrarToastInvitacion(usuario, senal) {
     container.appendChild(toast);
 
     document.getElementById(`accept-${usuario}`).onclick = async () => {
+        const conn = p2pManager.get(usuario);
+        if (!conn) return;
+
         console.log(`[WebRTC] Aceptando invitación de ${usuario}`);
-        const pc = new RTCPeerConnection(iceServers);
-        const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...' };
-        p2pManager.set(usuario, connection);
-        configurarPC(usuario, pc);
-        
         try {
-            await pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
+            await conn.pc.setRemoteDescription(new RTCSessionDescription(senal.sdp));
+            const answer = await conn.pc.createAnswer();
+            await conn.pc.setLocalDescription(answer);
             enviarSenal(usuario, { tipo: 'answer', sdp: answer });
             console.log(`[WebRTC] Answer enviado a ${usuario}`);
             
+            vaciarBufferCandidatos(usuario);
             toast.remove();
             actualizarSidebarP2P();
             conmutarChatP2P(usuario);
