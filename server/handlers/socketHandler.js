@@ -6,6 +6,8 @@ const Websocket = require('ws');
 const { isOriginAllowed, sanitizeHtml, sanitizeObject } = require('../utils/security');
 const { validarUsuario, validarMensaje, verificarRateLimit } = require('../utils/validation');
 
+const { obtenerConfigICE } = require('../utils/turnCredentials');
+
 module.exports = function(wss, logger) {
 
     // ÍNDICE DE SALAS PARA ESCALABILIDAD
@@ -287,6 +289,26 @@ module.exports = function(wss, logger) {
                                 data: messageData.data
                             }));
                         }
+                        break;
+
+                    case 'get-ice-config':
+                        if (!ws.usuarioIdentificado) {
+                            logger.log('WARNING', 'ice_config_unidentified', clientId, {});
+                            enviarError(ws, 'Debes identificarte primero');
+                            return;
+                        }
+
+                        const iceConfig = obtenerConfigICE(ws.nombreUsuario, 1);
+
+                        ws.send(JSON.stringify({
+                            tipo: 'ice-config',
+                            config: iceConfig
+                        }));
+
+                        logger.log('DEBUG', 'ice_config_sent', clientId, {
+                            username: ws.nombreUsuario,
+                            expiracion: iceConfig.iceServers[1]?.username?.split(':')[0]
+                        });
                         break;
 
                     default:

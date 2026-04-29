@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const Websocket = require('ws');
 const http = require('http');
 const fs = require('fs');

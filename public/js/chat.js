@@ -49,20 +49,33 @@ let activeP2PUser = null;
 let p2pEstaEscribiendo = false;
 let p2pTypingTimeout = null;
 
-const iceServers = {
-    iceServers: [
-        { urls: 'stun:stun.colsaba.site:5349' },
-        { 
-            urls: [
-                'turn:turn.colsaba.site:5349?transport=udp',
-                'turn:turn.colsaba.site:5349?transport=tcp'
-            ],
-            username: 'edwin',
-            credential: 'edwin2026'
-        }
-    ],
-    iceCandidatePoolSize: 10
-};
+// const iceServers = {
+//     iceServers: [
+//         { urls: 'stun:stun.colsaba.site:5349' },
+//         { 
+//             urls: [
+//                 'turn:turn.colsaba.site:5349?transport=udp',
+//                 'turn:turn.colsaba.site:5349?transport=tcp'
+//             ],
+//             username: 'edwin',
+//             credential: 'edwin2026'
+//         }
+//     ],
+//     iceCandidatePoolSize: 10
+// };
+let iceServers = null;
+let iceConfigReady = null;
+let resolveIceConfig = null;
+
+function esperarIceConfig() {
+    if (iceServers) return Promise.resolve(iceServers);
+    if (!iceConfigReady) {
+        iceConfigReady = new Promise(resolve => {
+            resolveIceConfig = resolve;
+        });
+    }
+    return iceConfigReady;
+}
 
 function obtenerUrlServer() {
     const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -211,6 +224,20 @@ function manejarMensaje(event) {
             chatContainer.classList.remove('hidden');
             userIdentity.classList.remove('hidden');
             currentUsernameSpan.textContent = miNombreUsuario;
+
+            socket.send(JSON.stringify({ tipo: 'get-ice-config' }));
+
+            break;
+        case 'ice-config':
+            iceServers = data.config;
+            if (resolveIceConfig) {
+                resolveIceConfig(iceServers);
+                resolveIceConfig = null;
+            }
+            console.log('[ICE] Configuración recibida, expira:',
+                new Date(parseInt(data.config.iceServers[1]?.username) * 1000)
+                    .toLocaleTimeString()
+            );
             break;
         case 'lista-usuarios':
             actualizarListaUsuarios(data.usuarios);
@@ -317,7 +344,11 @@ async function abrirVentanaP2P(usuario) {
 
 async function iniciarConexionP2P(usuario) {
     console.log(`[WebRTC] Iniciando conexión con: ${usuario}`);
-    const pc = new RTCPeerConnection(iceServers);
+
+    const config = await esperarIceConfig();
+
+    //const pc = new RTCPeerConnection(iceServers);
+    const pc = new RTCPeerConnection(config);
     const connection = { pc, dc: null, messages: [], unread: 0, status: 'Conectando...', candidateBuffer: [] };
     p2pManager.set(usuario, connection);
     
