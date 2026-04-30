@@ -14,6 +14,11 @@ const socketHandler = require('./handlers/socketHandler');
 const logger = new Logger();
 const httpServer = http.createServer();
 
+if (!process.env.TURN_SECRET) {
+    console.error('❌ TURN_SECRET no definido en .env — el servidor TURN no funcionará');
+    process.exit(1);
+}
+
 // Crear WebSocket Server
 const wss = new Websocket.Server({ server: httpServer });
 

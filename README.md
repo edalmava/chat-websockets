@@ -1,28 +1,30 @@
-# 💬 Secure Real-Time Chat (WebSocket + Node.js)
+# 💬 Secure Real-Time Chat & P2P (WebSocket + WebRTC)
 
-Una aplicación de chat en tiempo real diseñada con un enfoque prioritario en la **seguridad**, la **modularidad** y el **monitoreo profesional**. Ideal como base para sistemas de comunicación seguros o para aprender implementaciones avanzadas de WebSockets (WSS).
+Una plataforma de comunicación en tiempo real de alto rendimiento diseñada con un enfoque prioritario en la **seguridad**, la **modularidad** y la **privacidad**. Este proyecto combina la velocidad de los WebSockets para chats grupales con la privacidad de WebRTC para conversaciones P2P (Peer-to-Peer) directas.
 
 ---
 
 ## ✨ Características Principales
 
-### 🛡️ Seguridad de Nivel Producción
-- **WSS (WebSocket Secure):** Comunicación encriptada mediante TLS/SSL.
-- **Validación CORS Estricta:** Solo orígenes autorizados pueden establecer conexión.
-- **Protección contra XSS:** Sanitización exhaustiva de mensajes y nombres de usuario tanto en cliente como en servidor.
-- **Rate Limiting:** Control de frecuencia para prevenir ataques de denegación de servicio (DoS) o spam (5 mensajes/segundo).
-- **Handshake de Identificación:** Protocolo de unión explícito antes de permitir el intercambio de mensajes.
+### 🛡️ Seguridad y Robustez
+- **Validación CORS Estricta:** Control total sobre qué dominios pueden conectarse al servidor.
+- **Protección contra XSS:** Sanitización recursiva de objetos y HTML tanto en el cliente como en el servidor.
+- **Rate Limiting:** Sistema de control de inundación (spam) configurable por usuario.
+- **Gestión de Sesiones:** Handshake de identificación obligatoria y control de nombres duplicados.
+- **Reconexión Inteligente:** Cliente con algoritmo de backoff exponencial para recuperar conexiones perdidas.
 
-### 🏗️ Arquitectura Modular
-El backend ha sido desacoplado en módulos especializados para facilitar su mantenimiento y escalabilidad:
-- **`config/`**: Gestión centralizada de constantes y variables de entorno.
-- **`utils/`**: Funciones reutilizables de seguridad y validación.
-- **`handlers/`**: Lógica de eventos de red separada de la inicialización del servidor.
+### 🚀 Comunicación Avanzada
+- **Salas de Chat (Rooms):** Soporte nativo para múltiples canales (General, Desarrollo, Soporte, Random).
+- **WebRTC P2P Multi-chat:** Conversaciones privadas directas entre usuarios, cifradas de extremo a extremo, sin pasar mensajes de chat por el servidor.
+- **Indicadores de Estado:** Sistema de "Está escribiendo..." y confirmaciones de lectura (✓✓) en chats P2P.
+- **Infraestructura ICE/TURN:** Integración con servidores STUN/TURN para garantizar conectividad P2P incluso tras NATs restrictivos.
 
-### 📊 Monitoreo y Auditoría
-- **Sistema de Logging Profesional:** Registro de eventos en formato JSON.
-- **Rotación Automática:** Los archivos de log rotan al alcanzar los 10MB para optimizar el almacenamiento.
-- **Auditoría de Seguridad:** Seguimiento detallado de rechazos por CORS y violaciones de rate limit.
+### 🏗️ Arquitectura Modular (Clean Code)
+El backend está organizado para facilitar la mantenibilidad:
+- **`server/index.js`**: Punto de entrada con gestión de apagado limpio (Graceful Shutdown).
+- **`handlers/socketHandler.js`**: Orquestador central de eventos y señalización.
+- **`config/constants.js`**: Configuración centralizada de puertos, orígenes y límites.
+- **`Logger.js`**: Motor de auditoría profesional con rotación automática y formato JSON.
 
 ---
 
@@ -30,72 +32,66 @@ El backend ha sido desacoplado en módulos especializados para facilitar su mant
 
 ```text
 websockets/
-├── server/                 # Lógica del Backend (Node.js)
-│   ├── config/             # Constantes y parámetros
-│   ├── handlers/           # Lógica de WebSockets
-│   ├── utils/              # Seguridad y Validaciones
-│   ├── Logger.js           # Motor de logging JSON
-│   └── index.js            # Punto de entrada
-├── public/                 # Frontend (Cliente)
-│   ├── index.html          # Interfaz de usuario
-│   ├── js/chat.js          # Lógica del cliente
-│   └── css/styles.css      # Estilos visuales
-└── deploy.sh               # Script de despliegue para VPS
+├── server/                 # Backend Node.js
+│   ├── config/             # Configuración y constantes
+│   ├── handlers/           # Lógica de WebSockets y Señalización
+│   ├── utils/              # Seguridad, Validaciones y TURN
+│   ├── Logger.js           # Sistema de logs JSON
+│   └── index.js            # Servidor HTTP/WS
+├── public/                 # Frontend (Vanilla JS + CSS3)
+│   ├── index.html          # Interfaz principal
+│   ├── js/chat.js          # Lógica WebRTC y WebSocket
+│   └── css/styles.css      # Diseño responsive y UI
+└── logs/                   # Directorio de auditoría (auto-generado)
 ```
 
 ---
 
-## 🚀 Inicio Rápido (Desarrollo Local)
+## 🚀 Inicio Rápido (Desarrollo)
 
-### 1. Clonar e Instalar
-```bash
-git clone <repo-url> websockets
-cd websockets/server
-npm install ws
-```
+### 1. Requisitos Previos
+- Node.js (v16+)
+- Un archivo `.env` en la carpeta `server/` con la variable `TURN_SECRET`.
 
-### 2. Generar Certificados SSL
-Para habilitar WSS localmente, genera tus certificados auto-firmados:
+### 2. Instalación
 ```bash
-cd ..
-node generate-certs.js
+cd server
+npm install
 ```
 
 ### 3. Iniciar el Servidor
 ```bash
-cd server
 npm start
 ```
-> El servidor escuchará en `wss://localhost:8443` por defecto.
+> El servidor iniciará en `http://localhost:8443` por defecto (WebSocket en `ws://`).
 
-### 4. Acceder al Chat
-Abre `public/index.html` en tu navegador (se recomienda usar un servidor local como **Live Server** de VS Code para que coincidan los orígenes CORS configurados).
-
----
-
-## 🛠️ Configuración (CORS)
-
-Para añadir nuevos orígenes permitidos, edita `server/config/constants.js`:
-
-```javascript
-const ALLOWED_ORIGINS = [
-    'http://localhost:5500',
-    'https://tu-dominio.com'
-];
-```
+### 4. Acceder al Cliente
+Abre `public/index.html` usando un servidor local (como **Live Server** de VS Code) para que el origen coincida con los permitidos en `constants.js`.
 
 ---
 
-## 📝 Roadmap
+## 📊 Monitoreo y Auditoría
 
-- [ ] Implementar autenticación mediante JWT.
-- [ ] Persistencia de mensajes en base de datos (MongoDB/PostgreSQL).
-- [ ] Soporte para salas de chat privadas y canales.
-- [ ] Interfaz para compartir archivos y multimedia.
+El sistema genera logs estructurados en la carpeta `logs/`. Estos logs incluyen:
+- Intentos de conexión rechazados por CORS.
+- Violaciones de Rate Limit.
+- Eventos de señalización WebRTC.
+- Estadísticas periódicas de usuarios activos.
+
+*Nota: Los archivos rotan automáticamente al alcanzar los 10MB.*
 
 ---
 
-## 📄 Licencia
+## 📝 Roadmap (Próximos Pasos)
 
-Hecho con amor por
+- [ ] Implementar autenticación robusta mediante JWT.
+- [ ] Persistencia de historial de mensajes (Salas públicas) en base de datos.
+- [ ] Transferencia de archivos mediante WebRTC DataChannels.
+- [ ] Soporte para llamadas de audio/video P2P.
+
+---
+
+## 📄 Licencia y Créditos
+
+Desarrollado con enfoque en la excelencia técnica.
 © 2026 Edalmava.

@@ -300,6 +300,8 @@ module.exports = function(wss, logger) {
 
                         const iceConfig = obtenerConfigICE(ws.nombreUsuario, 1);
 
+                        ws.iceIssuedAt = Date.now(); // ← guardar cuándo se emitieron
+
                         ws.send(JSON.stringify({
                             tipo: 'ice-config',
                             config: iceConfig
@@ -366,6 +368,26 @@ module.exports = function(wss, logger) {
             ws.ping(); // Envía un frame de ping
         });
     }, 30000);
+
+    // El intervalo solo renueva a quienes llevan más de 50 minutos
+    const ICE_TTL_MS = 60 * 60 * 1000;      // 1 hora (igual que el TTL real)
+    const ICE_REFRESH_THRESHOLD = 50 * 60 * 1000; // renovar a los 50 min
+
+    setInterval(() => {
+        const ahora = Date.now();
+        wss.clients.forEach(client => {
+            if (
+                client.usuarioIdentificado &&
+                client.readyState === Websocket.OPEN &&
+                client.iceIssuedAt &&
+                (ahora - client.iceIssuedAt) >= ICE_REFRESH_THRESHOLD
+            ) {
+                const iceConfig = obtenerConfigICE(client.nombreUsuario, 1);
+                client.iceIssuedAt = ahora; // ← resetear el timestamp
+                client.send(JSON.stringify({ tipo: 'ice-config', config: iceConfig }));
+            }
+        });
+    }, 5 * 60 * 1000); // revisar cada 5 minutos es suficiente
 
     wss.on('close', () => {
         clearInterval(interval);

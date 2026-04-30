@@ -435,7 +435,8 @@ async function manejarSenalWebRTC(de, senal) {
     // Si es una oferta, pre-inicializar la conexión para no perder candidatos
     if (senal.tipo === 'offer' && !p2pManager.has(de)) {
         console.log(`[WebRTC] Pre-inicializando conexión para oferta de ${de}`);
-        const pc = new RTCPeerConnection(iceServers);
+        const config = await esperarIceConfig();
+        const pc = new RTCPeerConnection(config);
         const connection = { pc, dc: null, messages: [], unread: 0, status: 'Esperando...', candidateBuffer: [] };
         p2pManager.set(de, connection);
         configurarPC(de, pc);
