@@ -239,6 +239,9 @@ function manejarMensaje(event) {
                     .toLocaleTimeString()
             );
             break;
+        case 'salas-disponibles':
+            renderizarSalas(data.salas);
+            break;
         case 'lista-usuarios':
             actualizarListaUsuarios(data.usuarios);
             break;
@@ -262,6 +265,30 @@ function manejarMensaje(event) {
             // Ignorar otros tipos de mensajes internos para evitar bloques vacíos
             break;
     }
+}
+
+function renderizarSalas(salas) {
+    // Sidebar
+    const roomsList = document.getElementById('rooms');
+    roomsList.innerHTML = '';
+    salas.forEach(sala => {
+        const li = document.createElement('li');
+        li.textContent = sala;
+        li.dataset.room = sala;
+        if (sala === salaActual) li.classList.add('active');
+        li.onclick = () => cambiarSala(sala);
+        roomsList.appendChild(li);
+    });
+
+    // Select del login
+    const select = document.getElementById('loginRoomSelect');
+    select.innerHTML = '';
+    salas.forEach(sala => {
+        const option = document.createElement('option');
+        option.value = sala;
+        option.textContent = sala;
+        select.appendChild(option);
+    });
 }
 
 function actualizarIndicadorEscritura() {

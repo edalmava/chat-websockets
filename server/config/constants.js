@@ -34,9 +34,14 @@ const VALIDACION = {
 
 const SALAS_POR_DEFECTO = ['General', 'Desarrollo', 'Soporte', 'Random'];
 
+function esSalaValida(sala) {
+    return typeof sala === 'string' && SALAS_POR_DEFECTO.includes(sala);
+}
+
 module.exports = {
     PORT,
     ALLOWED_ORIGINS,
     VALIDACION,
-    SALAS_POR_DEFECTO
+    SALAS_POR_DEFECTO,
+    esSalaValida
 };

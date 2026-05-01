@@ -7,6 +7,7 @@ const { isOriginAllowed, sanitizeHtml, sanitizeObject } = require('../utils/secu
 const { validarUsuario, validarMensaje, verificarRateLimit } = require('../utils/validation');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
+const { esSalaValida, SALAS_POR_DEFECTO } = require('../config/constants');
 
 module.exports = function(wss, logger) {
 
@@ -122,6 +123,11 @@ module.exports = function(wss, logger) {
             ws.close(1008, 'Origen no autorizado (CORS)');
             return;
         }
+
+        ws.send(JSON.stringify({
+            tipo: 'salas-disponibles',
+            salas: SALAS_POR_DEFECTO
+        }));
         
         logger.log('INFO', 'client_connection', clientId, {
             origin,
@@ -178,7 +184,16 @@ module.exports = function(wss, logger) {
                         }
 
                         // Asignar nueva sala
-                        const nuevaSala = messageData.sala || 'General';
+                        const nuevaSala = messageData.sala;
+
+                        if (!esSalaValida(nuevaSala)) {
+                            logger.log('WARNING', 'invalid_room', clientId, {
+                                username: ws.nombreUsuario,
+                                sala_recibida: nuevaSala
+                            });
+                            enviarError(ws, `Sala inválida. Las salas disponibles son: ${SALAS_POR_DEFECTO.join(', ')}`);
+                            return;
+                        }
                         
                         // Si cambia de sala, notificar salida de la antigua y actualizar índice
                         if (antiguaSala && antiguaSala !== nuevaSala) {
