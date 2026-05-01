@@ -112,6 +112,29 @@ module.exports = function(wss, logger) {
         }
     }
 
+    /**
+     * Envía la configuración ICE (STUN/TURN) a un cliente específico
+     */
+    function enviarIceConfig(client) {
+        try {
+            if (client.readyState === Websocket.OPEN && client.usuarioIdentificado) {
+                const iceConfig = obtenerConfigICE(client.nombreUsuario, 1);
+                client.iceIssuedAt = Date.now();
+                client.send(JSON.stringify({
+                    tipo: 'ice-config',
+                    config: iceConfig
+                }));
+                
+                logger.log('DEBUG', 'ice_config_sent', client.id, {
+                    username: client.nombreUsuario,
+                    expiracion: iceConfig.iceServers[1]?.username?.split(':')[0]
+                });
+            }
+        } catch (error) {
+            logger.log('ERROR', 'ice_config_send_failed', client.id, { errorMsg: error.message });
+        }
+    }
+
     // MANEJAR NUEVAS CONEXIONES
     wss.on('connection', (ws, req) => {
         const clientId = Math.random().toString(36).substr(2, 9);
@@ -219,6 +242,9 @@ module.exports = function(wss, logger) {
                             sala: nuevaSala 
                         }));
 
+                        // Propuesta C: Enviar configuración ICE automáticamente tras el éxito del join
+                        enviarIceConfig(ws);
+
                         // Notificar a la nueva sala
                         broadcastMessage({ 
                             usuario: 'Servidor', 
@@ -307,25 +333,7 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'get-ice-config':
-                        if (!ws.usuarioIdentificado) {
-                            logger.log('WARNING', 'ice_config_unidentified', clientId, {});
-                            enviarError(ws, 'Debes identificarte primero');
-                            return;
-                        }
-
-                        const iceConfig = obtenerConfigICE(ws.nombreUsuario, 1);
-
-                        ws.iceIssuedAt = Date.now(); // ← guardar cuándo se emitieron
-
-                        ws.send(JSON.stringify({
-                            tipo: 'ice-config',
-                            config: iceConfig
-                        }));
-
-                        logger.log('DEBUG', 'ice_config_sent', clientId, {
-                            username: ws.nombreUsuario,
-                            expiracion: iceConfig.iceServers[1]?.username?.split(':')[0]
-                        });
+                        enviarIceConfig(ws);
                         break;
 
                     default:
@@ -352,7 +360,7 @@ module.exports = function(wss, logger) {
                     quitarDeSala(ws, ws.sala);
                     broadcastMessage({ 
                         usuario: 'Servidor', 
-                        mensaje: `El usuario "${ws.nombreUsuario}" se ha desconectado`,
+                        mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
                         tipo: 'sistema',
                         timestamp: new Date().toISOString()
                     }, ws.sala);
@@ -384,9 +392,8 @@ module.exports = function(wss, logger) {
         });
     }, 30000);
 
-    // El intervalo solo renueva a quienes llevan más de 50 minutos
-    const ICE_TTL_MS = 60 * 60 * 1000;      // 1 hora (igual que el TTL real)
-    const ICE_REFRESH_THRESHOLD = 50 * 60 * 1000; // renovar a los 50 min
+    // Propuesta B: Optimización de la renovación periódica
+    const ICE_REFRESH_THRESHOLD = 50 * 60 * 1000; // 50 minutos
 
     setInterval(() => {
         const ahora = Date.now();
@@ -397,12 +404,10 @@ module.exports = function(wss, logger) {
                 client.iceIssuedAt &&
                 (ahora - client.iceIssuedAt) >= ICE_REFRESH_THRESHOLD
             ) {
-                const iceConfig = obtenerConfigICE(client.nombreUsuario, 1);
-                client.iceIssuedAt = ahora; // ← resetear el timestamp
-                client.send(JSON.stringify({ tipo: 'ice-config', config: iceConfig }));
+                enviarIceConfig(client);
             }
         });
-    }, 5 * 60 * 1000); // revisar cada 5 minutos es suficiente
+    }, 5 * 60 * 1000); // Revisión cada 5 minutos
 
     wss.on('close', () => {
         clearInterval(interval);

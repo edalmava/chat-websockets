@@ -230,7 +230,7 @@ function manejarMensaje(event) {
                 userIdentity.classList.remove('hidden');
                 currentUsernameSpan.textContent = miNombreUsuario;
 
-                socket.send(JSON.stringify({ tipo: 'get-ice-config' }));
+                //socket.send(JSON.stringify({ tipo: 'get-ice-config' }));
             } else {
                 messages.innerHTML = '';
                 usuariosEscribiendo.clear();
@@ -247,6 +247,20 @@ function manejarMensaje(event) {
                 resolveIceConfig(iceServers);
                 resolveIceConfig = null;
             }
+
+            /* // Propuesta A: Propagar nuevas credenciales a todas las conexiones P2P activas
+            p2pManager.forEach((conn, usuario) => {
+                if (conn.pc && conn.pc.connectionState !== 'closed') {
+                    try {
+                        // setConfiguration permite actualizar servidores ICE sin reiniciar la conexión
+                        conn.pc.setConfiguration(iceServers);
+                        console.log(`[ICE] Credenciales TURN actualizadas en caliente para: ${usuario}`);
+                    } catch (err) {
+                        console.error(`[ICE] Fallo al actualizar config para ${usuario}:`, err);
+                    }
+                }
+            });
+ */
             console.log('[ICE] Configuración recibida, expira:',
                 new Date(parseInt(data.config.iceServers[1]?.username) * 1000)
                     .toLocaleTimeString()
