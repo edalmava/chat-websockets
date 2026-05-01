@@ -114,9 +114,18 @@ class Logger {
 
         fs.appendFile(this.currentLogFile, data, (err) => {
             if (err) {
-                console.error(`❌ Error persistiendo buffer de logs: ${err.message}`);
-                // En caso de error crítico, re-insertar logs al principio del buffer
-                this.buffer = [...logsToWrite, ...this.buffer];
+                console.error(`❌ Error persistiendo buffer: ${err.message}`);
+            
+                const recuperados = [...logsToWrite, ...this.buffer];
+                const MAX_BUFFER_EMERGENCIA = 200;
+
+                // Si supera el límite, quedarse solo con los más recientes
+                if (recuperados.length > MAX_BUFFER_EMERGENCIA) {
+                    console.error(`⚠️ Buffer en límite de emergencia, descartando ${recuperados.length - MAX_BUFFER_EMERGENCIA} logs antiguos`);
+                    this.buffer = recuperados.slice(-MAX_BUFFER_EMERGENCIA);
+                } else {
+                    this.buffer = recuperados;
+                }
             }
         });
     }
@@ -396,16 +405,14 @@ class Logger {
      */
     _setupSecuritySummary() {
         setInterval(() => {
-            const alerts = this.getSecurityAlerts();
-            
-            // Solo loguear si hay eventos registrados
-            if (alerts.totalEvents > 0) {
-                this.log('INFO', 'security_summary', 'system', alerts);
-            }
-
-            // Resetear contadores para el siguiente período
+            // Capturar y resetear en una sola operación
+            const snapshot = { ...this.eventCounters };
             this.resetCounters();
 
+            // Loguear solo si hubo actividad en este período
+            if (snapshot.totalEvents > 0) {
+                this.log('INFO', 'security_summary', 'system', snapshot);
+            }
         }, 30 * 1000); // Cada 30 segundos
     }
 

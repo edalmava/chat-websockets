@@ -32,7 +32,7 @@ const VALIDACION = {
     RATE_LIMIT_WINDOW: 1000
 };
 
-const SALAS_POR_DEFECTO = ['General', 'Desarrollo', 'Soporte', 'Random'];
+const SALAS_POR_DEFECTO = ['General', 'Desarrollo', 'Soporte', 'Random', 'Gaming', 'Música', 'Cine', 'Deportes', 'Tecnología', 'Off-Topic'];
 
 function esSalaValida(sala) {
     return typeof sala === 'string' && SALAS_POR_DEFECTO.includes(sala);

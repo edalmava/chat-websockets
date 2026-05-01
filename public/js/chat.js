@@ -1,9 +1,11 @@
-/* Última modificación: 26-04-2026 06:39 p.m.*/
+/* Última modificación: 30-04-2026 10:00 p.m.*/
 
 let socket = null;
 let reintentosConexion = 0;
 const MAX_REINTENTOS = 5;
 let reconexionTimeout = null;
+
+let salasDisponibles = [];
 
 // Elementos del DOM
 const loginContainer = document.getElementById('login-container');
@@ -219,13 +221,24 @@ function manejarMensaje(event) {
 
     switch (data.tipo) {
         case 'join-success':
+            const esPrimerIngreso = !salaActual;
             salaActual = data.sala;
-            loginContainer.classList.add('hidden');
-            chatContainer.classList.remove('hidden');
-            userIdentity.classList.remove('hidden');
-            currentUsernameSpan.textContent = miNombreUsuario;
 
-            socket.send(JSON.stringify({ tipo: 'get-ice-config' }));
+            if (esPrimerIngreso) {
+                loginContainer.classList.add('hidden');
+                chatContainer.classList.remove('hidden');
+                userIdentity.classList.remove('hidden');
+                currentUsernameSpan.textContent = miNombreUsuario;
+
+                socket.send(JSON.stringify({ tipo: 'get-ice-config' }));
+            } else {
+                messages.innerHTML = '';
+                usuariosEscribiendo.clear();
+                actualizarIndicadorEscritura();
+            }
+            
+            actualizarSalaActiva(salaActual);
+            //renderizarSalas(salasDisponibles);          
 
             break;
         case 'ice-config':
@@ -241,6 +254,7 @@ function manejarMensaje(event) {
             break;
         case 'salas-disponibles':
             renderizarSalas(data.salas);
+            salasDisponibles = data.salas;
             break;
         case 'lista-usuarios':
             actualizarListaUsuarios(data.usuarios);
@@ -267,6 +281,12 @@ function manejarMensaje(event) {
     }
 }
 
+function actualizarSalaActiva(sala) {
+    document.querySelectorAll('#rooms li').forEach(li => {
+        li.classList.toggle('active', li.dataset.room === sala);
+    });
+}
+
 function renderizarSalas(salas) {
     // Sidebar
     const roomsList = document.getElementById('rooms');
@@ -289,6 +309,18 @@ function renderizarSalas(salas) {
         option.textContent = sala;
         select.appendChild(option);
     });
+}
+
+function cambiarSala(nuevaSala) {
+    // Evitar cambiar a la sala en la que ya estás
+    if (nuevaSala === salaActual) return;
+
+    // Enviar al servidor
+    socket.send(JSON.stringify({
+        tipo: 'join',
+        usuario: miNombreUsuario,
+        sala: nuevaSala
+    }));
 }
 
 function actualizarIndicadorEscritura() {
