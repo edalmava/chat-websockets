@@ -2,7 +2,7 @@
  * UTILIDADES DE VALIDACIÓN DE ENTRADA Y RATE LIMITING
  */
 
-const { VALIDACION } = require('../config/constants');
+const { VALIDACION, ROLES, MAX_MUTE_DURATION } = require('../config/constants');
 
 /**
  * Valida que el usuario tenga formato correcto
@@ -74,8 +74,41 @@ function verificarRateLimit(client) {
     return { permitido: true };
 }
 
+/**
+ * Valida que el nuevo rol sea válido
+ */
+function validarRol(rol) {
+    if (!rol || typeof rol !== 'string') {
+        return { válido: false, error: 'El rol es requerido y debe ser un texto' };
+    }
+    
+    if (!Object.values(ROLES).includes(rol)) {
+        return { válido: false, error: `El rol "${rol}" no es válido` };
+    }
+    
+    return { válido: true };
+}
+
+/**
+ * Valida que la duración del mute sea un número válido y menor al máximo permitido
+ */
+function validarDuracionMute(duracion) {
+    const num = Number(duracion);
+    if (isNaN(num) || !Number.isInteger(num) || num <= 0) {
+        return { válido: false, error: 'La duración del silenciamiento debe ser un número entero mayor que 0' };
+    }
+    
+    if (num > MAX_MUTE_DURATION) {
+        return { válido: false, error: `La duración no puede ser mayor a ${MAX_MUTE_DURATION} segundos (1 hora)` };
+    }
+    
+    return { válido: true, duracion: num };
+}
+
 module.exports = {
     validarUsuario,
     validarMensaje,
-    verificarRateLimit
+    verificarRateLimit,
+    validarRol,
+    validarDuracionMute
 };

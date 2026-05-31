@@ -19,6 +19,11 @@ if (!process.env.TURN_SECRET) {
     process.exit(1);
 }
 
+if (!process.env.SUPABASE_JWT_SECRET) {
+    console.error('❌ SUPABASE_JWT_SECRET no definido en .env — la autenticación no funcionará');
+    process.exit(1);
+}
+
 // Crear WebSocket Server
 const wss = new Websocket.Server({ server: httpServer });
 

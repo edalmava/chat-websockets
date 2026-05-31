@@ -50,7 +50,6 @@ h1 {
 
 h2 {
     font-family: 'Plus Jakarta Sans', sans-serif;
-    font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-primary);
     margin: 0 0 15px 0;
@@ -97,25 +96,61 @@ h2 {
     margin-bottom: 20px;
 }
 
-#loginUsernameInput {
+#login-box .form-group {
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+#login-box input[type="text"],
+#login-box input[type="email"],
+#login-box input[type="password"] {
     width: 100%;
     padding: 12px 15px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    font-size: 1rem;
-    margin-bottom: 20px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: white;
+    transition: all 0.2s ease;
     box-sizing: border-box;
 }
 
-#loginUsernameInput:focus {
+#login-box input:focus {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
-#joinButton {
-    width: 100%;
+#auth-error {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-top: 15px;
+    border: 1px solid #fecaca;
 }
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+
+
+
 
 /* ============================================
    CONTENEDOR PRINCIPAL
@@ -136,22 +171,7 @@ h2 {
     overflow: hidden;
 }
 
-#loginRoomSelect {
-    width: 100%;
-    padding: 12px 15px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    font-size: 1rem;
-    margin-bottom: 20px;
-    background: white;
-    cursor: pointer;
-}
 
-#loginRoomSelect:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
 
 /* ============================================
    SIDEBAR (Salas + Usuarios)
@@ -164,7 +184,7 @@ h2 {
     overflow-y: auto;
 }
 
-#room-list, #user-list {
+#room-list, #user-list-section {
     padding: 20px 15px;
 }
 
@@ -212,7 +232,7 @@ h2 {
     font-style: italic;
 }
 
-#user-list li {
+#users li {
     padding: 10px 12px;
     background: white;
     margin-bottom: 8px;
@@ -226,7 +246,7 @@ h2 {
     cursor: pointer;
 }
 
-#user-list li::before {
+#users li::before {
     content: '';
     position: absolute;
     left: 0;
@@ -239,15 +259,52 @@ h2 {
     margin-left: 8px;
 }
 
-#user-list li:hover {
+#users li:hover {
     background: #f0f9ff;
     transform: translateX(4px);
     box-shadow: var(--shadow-md);
 }
 
+#admin-panel {
+    border-top: 1px solid var(--border-color);
+    padding: 15px;
+}
+
+#admin-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#admin-controls label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+#admin-controls select {
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: white;
+    color: var(--text-primary);
+}
+
+#adminChangeRoleButton {
+    margin-top: 5px;
+    font-size: 0.8rem;
+    padding: 8px 12px;
+}
+
+#p2p-list-section {
+    border-top: 1px solid var(--border-color);
+    padding: 15px;
+}
+
 /* ============================================
-   MODAL P2P
-   ============================================ */
+    MODAL P2P
+    ============================================ */
 #p2p-modal {
     position: fixed;
     top: 0;
@@ -608,28 +665,7 @@ h2 {
     to { opacity: 1; }
 }
 
-#usernameInput {
-    width: 100%;
-    padding: 12px 15px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    font-size: 0.95rem;
-    font-family: inherit;
-    color: var(--text-primary);
-    background: white;
-    transition: all 0.2s ease;
-    box-sizing: border-box;
-}
 
-#usernameInput:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-#usernameInput::placeholder {
-    color: var(--text-muted);
-}
 
 #message-input-wrapper {
     display: grid;
@@ -660,6 +696,56 @@ h2 {
 
 #messageInput::placeholder {
     color: var(--text-muted);
+}
+
+/* ============================================
+   AUTH TABS
+   ============================================ */
+#auth-tabs {
+    display: flex;
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.auth-tab {
+    flex: 1;
+    padding: 10px 15px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    border-radius: 0;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: none;
+    position: relative;
+}
+
+.auth-tab:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    transform: none;
+    box-shadow: none;
+}
+
+.auth-tab.active {
+    color: var(--primary-color);
+    font-weight: 600;
+    background: transparent;
+}
+
+.auth-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--primary-color);
+    border-radius: 1px;
 }
 
 /* ============================================
@@ -795,10 +881,10 @@ button:active {
         min-height: 700px;
     }
 
-    #user-list {
-        border-right: none;
+    #user-list-section {
         border-bottom: 1px solid var(--border-color);
         max-height: 150px;
+        overflow-y: auto;
         padding: 15px;
     }
 

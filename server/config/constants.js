@@ -38,10 +38,31 @@ function esSalaValida(sala) {
     return typeof sala === 'string' && SALAS_POR_DEFECTO.includes(sala);
 }
 
+// --- CONFIGURACIÓN DE AUTENTICACIÓN Y ROLES DE SUPABASE ---
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+const JWT_ALGORITHMS = ['HS256', 'ES256'];
+
+const ROLES = Object.freeze({
+    USER: 'user',
+    MODERATOR: 'moderator',
+    ADMIN: 'admin'
+});
+
+const MAX_MUTE_DURATION = 3600; // 1 hora en segundos
+
+const MODERATOR_ACTIONS = ['kick_user', 'mute_user'];
+const ADMIN_ACTIONS = ['cambiar_rol'];
+
 module.exports = {
     PORT,
     ALLOWED_ORIGINS,
     VALIDACION,
     SALAS_POR_DEFECTO,
-    esSalaValida
+    esSalaValida,
+    SUPABASE_JWT_SECRET,
+    JWT_ALGORITHMS,
+    ROLES,
+    MAX_MUTE_DURATION,
+    MODERATOR_ACTIONS,
+    ADMIN_ACTIONS
 };

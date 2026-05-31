@@ -15,7 +15,8 @@ class Logger {
             DEBUG: { code: 10, name: 'DEBUG' },
             INFO: { code: 20, name: 'INFO' },
             WARNING: { code: 30, name: 'WARNING' },
-            ERROR: { code: 40, name: 'ERROR' }
+            ERROR: { code: 40, name: 'ERROR' },
+            AUTH: { code: 50, name: 'AUTH' } // Nivel especial para eventos de autenticación
         };
 
         // Configuración

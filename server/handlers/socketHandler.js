@@ -1,13 +1,14 @@
 /**
- * GESTOR DE EVENTOS WEBSOCKET
+ * GESTOR DE EVENTOS WEBSOCKET CON SOPORTE SUPABASE AUTH Y ROLES
  */
 
 const Websocket = require('ws');
 const { isOriginAllowed, sanitizeHtml, sanitizeObject } = require('../utils/security');
-const { validarUsuario, validarMensaje, verificarRateLimit } = require('../utils/validation');
+const { validarMensaje, verificarRateLimit, validarRol, validarDuracionMute } = require('../utils/validation');
+const { verificarAutenticacion, verificarPermiso, verificarToken } = require('../middleware/authMiddleware');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
-const { esSalaValida, SALAS_POR_DEFECTO } = require('../config/constants');
+const { esSalaValida, SALAS_POR_DEFECTO, ROLES } = require('../config/constants');
 
 module.exports = function(wss, logger) {
 
@@ -15,9 +16,13 @@ module.exports = function(wss, logger) {
     // Map<NombreSala, Set<Websocket>>
     const salas = new Map();
 
-    // REGISTRO GLOBAL DE USUARIOS (Para señalización P2P)
-    // Map<NombreUsuario, Websocket>
+    // REGISTRO GLOBAL DE USUARIOS CONECTADOS (Clave: userId de Supabase UUID)
+    // Map<UUID, Websocket>
     const usuariosConectados = new Map();
+
+    // REGISTRO DE USUARIOS SILENCIADOS
+    // Map<UUID, { hasta: timestamp, por: displayName }>
+    const usuariosSilenciados = new Map();
 
     /**
      * Añade un cliente a una sala en el índice
@@ -44,7 +49,7 @@ module.exports = function(wss, logger) {
     }
 
     /**
-     * Envía la lista de usuarios conectados a todos los clientes de una sala específica
+     * Envía la lista de usuarios conectados (con sus roles) a todos los clientes de una sala específica
      */
     function enviarListaUsuarios(sala) {
         const salaSet = salas.get(sala);
@@ -52,7 +57,11 @@ module.exports = function(wss, logger) {
 
         const usuariosEnSala = Array.from(salaSet)
             .filter(client => client.usuarioIdentificado)
-            .map(client => client.nombreUsuario);   
+            .map(client => ({
+                userId: client.userId,
+                displayName: client.nombreUsuario,
+                role: client.role
+            }));   
         
         broadcastMessage({ 
             tipo: 'lista-usuarios', 
@@ -106,7 +115,7 @@ module.exports = function(wss, logger) {
                 client.send(JSON.stringify(errorObj));
             }
         } catch (err) {
-            logger.log('ERROR', 'send_error_failed', 'system', {
+            logger.log('ERROR', 'send_error_failed', client.id || 'desconocido', {
                 errorMsg: err.message
             });
         }
@@ -136,41 +145,83 @@ module.exports = function(wss, logger) {
     }
 
     // MANEJAR NUEVAS CONEXIONES
-    wss.on('connection', (ws, req) => {
+    wss.on('connection', async (ws, req) => {
         const clientId = Math.random().toString(36).substr(2, 9);
         const origin = req.headers.origin || 'sin-origen';
         const userAgent = req.headers['user-agent'] || 'desconocido';
         
+        // 1. Validación CORS
         if (!isOriginAllowed(req.headers.origin)) {
             logger.log('WARNING', 'cors_rejected', clientId, { origin_rechazado: origin });
             ws.close(1008, 'Origen no autorizado (CORS)');
             return;
         }
 
-        ws.send(JSON.stringify({
-            tipo: 'salas-disponibles',
-            salas: SALAS_POR_DEFECTO
-        }));
-        
-        logger.log('INFO', 'client_connection', clientId, {
+        // 2. Validación y Autenticación del Token JWT
+        const authData = await verificarAutenticacion(ws, req, logger);
+        if (!authData) {
+            // Si el token es inválido o no existe, verificarAutenticacion ya cerró el socket
+            return;
+        }
+
+        // 3. Control de sesiones simultáneas/duplicadas
+        if (usuariosConectados.has(authData.userId)) {
+            const oldWs = usuariosConectados.get(authData.userId);
+            logger.log('INFO', 'session_duplicate_closed', oldWs.id, {
+                userId: authData.userId,
+                username: oldWs.nombreUsuario
+            });
+            oldWs.send(JSON.stringify({
+                tipo: 'error',
+                mensaje: 'Se ha iniciado sesión en otra ubicación. Conexión cerrada.',
+                timestamp: new Date().toISOString()
+            }));
+            oldWs.close(4002, 'Sesión iniciada en otra ubicación');
+        }
+
+        // 4. Inicialización del estado de la conexión
+        ws.id = clientId;
+        ws.userId = authData.userId;
+        ws.nombreUsuario = authData.displayName;
+        ws.email = authData.email;
+        ws.role = authData.role;
+        ws.tokenExp = authData.tokenExp;
+        ws.usuarioIdentificado = true; // El usuario queda autenticado inmediatamente
+        ws.isAlive = true; // Para Heartbeat
+        ws.sala = null;
+        ws.messageTimestamps = [];
+
+        // Registrar inmediatamente en el mapa global de usuarios en línea
+        usuariosConectados.set(ws.userId, ws);
+
+        logger.log('INFO', 'client_connection_authenticated', clientId, {
+            userId: ws.userId,
+            username: ws.nombreUsuario,
+            role: ws.role,
             origin,
             totalConexiones: wss.clients.size,
             userAgent
         });
-        
-        ws.id = clientId;
-        ws.isAlive = true; // Para el Heartbeat
-        ws.usuarioIdentificado = false;
-        ws.nombreUsuario = null;
-        ws.sala = null;
-        ws.messageTimestamps = [];
+
+        // 5. Enviar información inicial al cliente
+        ws.send(JSON.stringify({
+            tipo: 'salas-disponibles',
+            salas: SALAS_POR_DEFECTO
+        }));
+
+        ws.send(JSON.stringify({
+            tipo: 'auth-info',
+            role: ws.role,
+            displayName: ws.nombreUsuario,
+            userId: ws.userId
+        }));
 
         // Registrar latido (pong)
         ws.on('pong', () => {
             ws.isAlive = true;
         });
 
-        ws.on('message', (message) => {
+        ws.on('message', async (message) => {
             try {
                 let messageData;
                 try {
@@ -184,29 +235,6 @@ module.exports = function(wss, logger) {
                 switch (messageData.tipo) {
                     case 'join':
                         const antiguaSala = ws.sala;
-
-                        // Validar nombre de usuario (solo si no está ya identificado)
-                        if (!ws.usuarioIdentificado) {
-                            const validUser = validarUsuario(messageData.usuario);
-                            if (!validUser.válido) {
-                                logger.log('WARNING', 'user_validation_failed', clientId, { razon: validUser.error });
-                                enviarError(ws, validUser.error);
-                                return;
-                            }
-
-                            // Verificar si el nombre ya está en uso
-                            if (usuariosConectados.has(validUser.usuario)) {
-                                logger.log('WARNING', 'duplicate_username_attempt', clientId, { username: validUser.usuario });
-                                enviarError(ws, 'El nombre de usuario ya está en uso. Por favor, elige otro.');
-                                return;
-                            }
-
-                            ws.nombreUsuario = validUser.usuario;
-                            ws.usuarioIdentificado = true;
-                            logger.log('INFO', 'user_identified', clientId, { username: ws.nombreUsuario });
-                        }
-
-                        // Asignar nueva sala
                         const nuevaSala = messageData.sala;
 
                         if (!esSalaValida(nuevaSala)) {
@@ -232,9 +260,6 @@ module.exports = function(wss, logger) {
                         // Actualizar estado del socket e índice de salas
                         ws.sala = nuevaSala;
                         agregarASala(ws, nuevaSala);
-                        
-                        // Registrar en el mapa global para señalización WebRTC
-                        usuariosConectados.set(ws.nombreUsuario, ws);
 
                         // Confirmar éxito al cliente
                         ws.send(JSON.stringify({ 
@@ -242,7 +267,7 @@ module.exports = function(wss, logger) {
                             sala: nuevaSala 
                         }));
 
-                        // Propuesta C: Enviar configuración ICE automáticamente tras el éxito del join
+                        // Enviar configuración ICE automáticamente tras el éxito del join
                         enviarIceConfig(ws);
 
                         // Notificar a la nueva sala
@@ -261,10 +286,15 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'chat':
-                        if (!ws.usuarioIdentificado) {
-                            logger.log('WARNING', 'chat_attempt_unidentified', clientId, {});
-                            enviarError(ws, 'Debes identificarte primero');
-                            return;
+                        // Validar si el usuario está silenciado temporalmente
+                        if (usuariosSilenciados.has(ws.userId)) {
+                            const muteInfo = usuariosSilenciados.get(ws.userId);
+                            if (Date.now() < muteInfo.hasta) {
+                                const restantes = Math.ceil((muteInfo.hasta - Date.now()) / 1000);
+                                enviarError(ws, `Estás silenciado. No puedes enviar mensajes por los siguientes ${restantes} segundos. Silenciado por: ${muteInfo.por}.`);
+                                return;
+                            }
+                            usuariosSilenciados.delete(ws.userId);
                         }
 
                         const messageStartTime = Date.now();
@@ -282,10 +312,10 @@ module.exports = function(wss, logger) {
                             return;
                         }
 
-                        // Enviar solo a la sala actual (usará el Map de salas)
                         broadcastMessage({
                             tipo: 'chat',
                             usuario: ws.nombreUsuario,
+                            userId: ws.userId,
                             mensaje: validMsg.mensaje,
                             timestamp: new Date().toISOString()
                         }, ws.sala);
@@ -298,13 +328,13 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'typing':
-                        if (!ws.usuarioIdentificado || !ws.sala) return;
+                        if (!ws.sala) return;
 
-                        // Retransmitir solo a los de la misma sala usando el índice
                         const salaTyping = salas.get(ws.sala);
                         if (salaTyping) {
                             const typingMsg = JSON.stringify({
                                 tipo: 'user-typing',
+                                userId: ws.userId,
                                 usuario: sanitizeHtml(ws.nombreUsuario),
                                 escribiendo: !!messageData.escribiendo
                             });
@@ -318,15 +348,14 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'webrtc-signal':
-                        if (!ws.usuarioIdentificado) return;
-                        
-                        const destinatario = messageData.para;
-                        const targetWs = usuariosConectados.get(destinatario);
+                        const destinatarioId = messageData.para;
+                        const targetWs = usuariosConectados.get(destinatarioId);
 
                         if (targetWs && targetWs.readyState === Websocket.OPEN) {
                             targetWs.send(JSON.stringify({
                                 tipo: 'webrtc-signal',
-                                de: ws.nombreUsuario,
+                                de: ws.userId,
+                                deNombre: ws.nombreUsuario,
                                 data: messageData.data
                             }));
                         }
@@ -334,6 +363,193 @@ module.exports = function(wss, logger) {
 
                     case 'get-ice-config':
                         enviarIceConfig(ws);
+                        break;
+
+                    case 'token_refresh':
+                        try {
+                            const nuevoToken = messageData.token;
+                            if (!nuevoToken) throw new Error('Token ausente');
+
+                            const authData = await verificarToken(nuevoToken, logger);
+                            if (!authData) throw new Error('Token inválido o expirado');
+
+                            if (authData.userId !== ws.userId) {
+                                throw new Error('El ID de usuario en el nuevo token no coincide con la sesión actual');
+                            }
+
+                            ws.tokenExp = authData.tokenExp;
+                            ws.role = authData.role;
+                            ws.nombreUsuario = authData.displayName;
+
+                            ws.send(JSON.stringify({
+                                tipo: 'token_refresh_ok',
+                                role: ws.role,
+                                displayName: ws.nombreUsuario
+                            }));
+
+                            logger.log('INFO', 'token_refresh_success', ws.id, {
+                                userId: ws.userId,
+                                username: ws.nombreUsuario,
+                                role: ws.role
+                            });
+
+                            if (ws.sala) {
+                                enviarListaUsuarios(ws.sala);
+                            }
+                        } catch (err) {
+                            logger.log('WARNING', 'token_refresh_failed', ws.id, { error: err.message });
+                            ws.close(4001, 'Token refresh falló');
+                        }
+                        break;
+
+                    case 'kick_user':
+                        if (!verificarPermiso(ws, 'kick_user')) {
+                            enviarError(ws, 'No tienes permisos para expulsar usuarios');
+                            break;
+                        }
+                        if (!verificarRateLimit(ws).permitido) {
+                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
+                            break;
+                        }
+
+                        const targetKickId = messageData.payload?.userId;
+                        const motivoKick = messageData.payload?.motivo || 'Expulsado por moderador';
+                        const targetKickWs = usuariosConectados.get(targetKickId);
+
+                        if (targetKickWs) {
+                            logger.log('INFO', 'user_kicked', ws.id, {
+                                target: targetKickWs.nombreUsuario,
+                                targetId: targetKickId,
+                                por: ws.nombreUsuario
+                            });
+
+                            targetKickWs.send(JSON.stringify({
+                                tipo: 'kicked',
+                                payload: {
+                                    motivo: motivoKick,
+                                    por: ws.nombreUsuario
+                                }
+                            }));
+
+                            if (targetKickWs.sala) {
+                                broadcastMessage({
+                                    usuario: 'Servidor',
+                                    mensaje: `El usuario "${targetKickWs.nombreUsuario}" ha sido expulsado de la sala por el moderador "${ws.nombreUsuario}" (${motivoKick})`,
+                                    tipo: 'sistema',
+                                    timestamp: new Date().toISOString()
+                                }, targetKickWs.sala);
+                            }
+
+                            targetKickWs.close(4003, 'Expulsado por moderador');
+                        } else {
+                            enviarError(ws, 'Usuario objetivo no encontrado en línea');
+                        }
+                        break;
+
+                    case 'mute_user':
+                        if (!verificarPermiso(ws, 'mute_user')) {
+                            enviarError(ws, 'No tienes permisos para silenciar usuarios');
+                            break;
+                        }
+                        if (!verificarRateLimit(ws).permitido) {
+                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
+                            break;
+                        }
+
+                        const targetMuteId = messageData.payload?.userId;
+                        const duracionInput = messageData.payload?.duracion;
+
+                        const muteVal = validarDuracionMute(duracionInput);
+                        if (!muteVal.válido) {
+                            enviarError(ws, muteVal.error);
+                            break;
+                        }
+
+                        const targetMuteWs = usuariosConectados.get(targetMuteId);
+                        if (targetMuteWs) {
+                            const hastaTimestamp = Date.now() + (muteVal.duracion * 1000);
+                            usuariosSilenciados.set(targetMuteId, {
+                                hasta: hastaTimestamp,
+                                por: ws.nombreUsuario
+                            });
+
+                            logger.log('INFO', 'user_muted', ws.id, {
+                                target: targetMuteWs.nombreUsuario,
+                                targetId: targetMuteId,
+                                duracion: muteVal.duracion,
+                                por: ws.nombreUsuario
+                            });
+
+                            targetMuteWs.send(JSON.stringify({
+                                tipo: 'muted',
+                                payload: {
+                                    duracion: muteVal.duracion,
+                                    por: ws.nombreUsuario
+                                }
+                            }));
+
+                            if (targetMuteWs.sala) {
+                                broadcastMessage({
+                                    usuario: 'Servidor',
+                                    mensaje: `El usuario "${targetMuteWs.nombreUsuario}" ha sido silenciado por ${muteVal.duracion} segundos por "${ws.nombreUsuario}"`,
+                                    tipo: 'sistema',
+                                    timestamp: new Date().toISOString()
+                                }, targetMuteWs.sala);
+                            }
+                        } else {
+                            enviarError(ws, 'Usuario objetivo no encontrado en línea');
+                        }
+                        break;
+
+                    case 'cambiar_rol':
+                        if (!verificarPermiso(ws, 'cambiar_rol')) {
+                            enviarError(ws, 'No tienes permisos para cambiar roles');
+                            break;
+                        }
+                        if (!verificarRateLimit(ws).permitido) {
+                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
+                            break;
+                        }
+
+                        const targetRolId = messageData.payload?.userId;
+                        const nuevoRol = messageData.payload?.nuevoRol;
+
+                        const rolVal = validarRol(nuevoRol);
+                        if (!rolVal.válido) {
+                            enviarError(ws, rolVal.error);
+                            break;
+                        }
+
+                        const targetRolWs = usuariosConectados.get(targetRolId);
+                        if (targetRolWs) {
+                            targetRolWs.role = nuevoRol;
+                            logger.log('INFO', 'user_role_changed', ws.id, {
+                                target: targetRolWs.nombreUsuario,
+                                targetId: targetRolId,
+                                nuevoRol,
+                                por: ws.nombreUsuario
+                            });
+
+                            targetRolWs.send(JSON.stringify({
+                                tipo: 'rol_actualizado',
+                                payload: {
+                                    nuevoRol
+                                }
+                            }));
+
+                            targetRolWs.send(JSON.stringify({
+                                tipo: 'auth-info',
+                                role: targetRolWs.role,
+                                displayName: targetRolWs.nombreUsuario,
+                                userId: targetRolWs.userId
+                            }));
+
+                            if (targetRolWs.sala) {
+                                enviarListaUsuarios(targetRolWs.sala);
+                            }
+                        } else {
+                            enviarError(ws, 'Usuario objetivo no encontrado en línea (los cambios persistentes en la BD se aplicarán en su próximo login)');
+                        }
                         break;
 
                     default:
@@ -348,25 +564,27 @@ module.exports = function(wss, logger) {
         });
 
         ws.on('close', () => {
-            if (ws.usuarioIdentificado) {
-                logger.log('INFO', 'user_disconnection', clientId, { username: ws.nombreUsuario, totalConexiones: wss.clients.size - 1 });
-                
-                // Limpiar del registro global
-                if (ws.nombreUsuario) {
-                    usuariosConectados.delete(ws.nombreUsuario);
-                }
+            logger.log('INFO', 'user_disconnection', clientId, { 
+                userId: ws.userId,
+                username: ws.nombreUsuario, 
+                totalConexiones: wss.clients.size - 1 
+            });
+            
+            // Eliminar del registro global
+            if (ws.userId) {
+                usuariosConectados.delete(ws.userId);
+            }
 
-                if (ws.sala) {
-                    quitarDeSala(ws, ws.sala);
-                    broadcastMessage({ 
-                        usuario: 'Servidor', 
-                        mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
-                        tipo: 'sistema',
-                        timestamp: new Date().toISOString()
-                    }, ws.sala);
-                    
-                    enviarListaUsuarios(ws.sala);
-                }
+            if (ws.sala) {
+                quitarDeSala(ws, ws.sala);
+                broadcastMessage({ 
+                    usuario: 'Servidor', 
+                    mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
+                    tipo: 'sistema',
+                    timestamp: new Date().toISOString()
+                }, ws.sala);
+                
+                enviarListaUsuarios(ws.sala);
             }
         });
 
@@ -392,7 +610,7 @@ module.exports = function(wss, logger) {
         });
     }, 30000);
 
-    // Propuesta B: Optimización de la renovación periódica
+    // Optimización de la renovación periódica de credenciales ICE
     const ICE_REFRESH_THRESHOLD = 50 * 60 * 1000; // 50 minutos
 
     setInterval(() => {
@@ -413,3 +631,4 @@ module.exports = function(wss, logger) {
         clearInterval(interval);
     });
 };
+
