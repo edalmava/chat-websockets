@@ -3,7 +3,7 @@
  * 
  * Reemplaza los valores con las credenciales de tu proyecto Supabase.
  */
-const CONFIG = Object.freeze({
+export const CONFIG = Object.freeze({
     // URL de tu proyecto Supabase (Dashboard -> Settings -> API -> Project URL)
     SUPABASE_URL: window.env?.SUPABASE_URL || 'https://mhlkaqlfoeebwztlldgu.supabase.co',
     

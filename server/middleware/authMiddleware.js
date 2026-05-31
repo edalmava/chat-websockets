@@ -2,13 +2,16 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { ROLES, MODERATOR_ACTIONS, ADMIN_ACTIONS } = require('../config/constants');
 
-// Cliente JWKS singleton para verificación de tokens Supabase
+// Cliente JWKS singleton para verificación de tokens Supabase (ES256 asimétrica)
 const jwks = jwksClient({
     jwksUri: 'https://mhlkaqlfoeebwztlldgu.supabase.co/auth/v1/.well-known/jwks.json'
 });
 
 function getKey(header, callback) {
-    jwks.getSigningKey(header.kid, function(err, key) {
+    if (!header || header.alg !== 'ES256') {
+        return callback(new Error(`Algoritmo de firma no soportado: ${header?.alg || 'desconocido'}`));
+    }
+    jwks.getSigningKey(header.kid, (err, key) => {
         if (err) return callback(err);
         callback(null, key.getPublicKey());
     });
@@ -33,7 +36,8 @@ async function verificarToken(token, logger) {
             throw new Error('Claims requeridos ausentes o incorrectos (sub/aud)');
         }
 
-        const userRole = decoded.user_role || ROLES.USER;
+        // Mapeo correcto de roles de Supabase desde app_metadata, user_metadata o raíz
+        const userRole = decoded.app_metadata?.role || decoded.user_metadata?.role || decoded.user_role || ROLES.USER;
         if (!Object.values(ROLES).includes(userRole)) {
             throw new Error(`Rol no reconocido: ${userRole}`);
         }
@@ -54,37 +58,18 @@ async function verificarToken(token, logger) {
 }
 
 /**
- * Middleware para verificar la conexión WebSocket utilizando el JWT de Supabase
- * @param {WebSocket} ws - Conexión WebSocket
- * @param {http.IncomingMessage} req - Petición HTTP de upgrade
+ * Verifica la autenticación usando un token JWT recibido como mensaje
+ * (en lugar de query string en la URL de conexión)
+ * @param {string} token - Token JWT a verificar
  * @param {Logger} logger - Instancia del logger del servidor
  * @returns {object|null} Retorna los datos del usuario decodificados o null si falla la validación
  */
-async function verificarAutenticacion(ws, req, logger) {
-    let url;
-    try {
-        url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    } catch (e) {
-        logger.log('AUTH', `Error al parsear URL de conexión: ${e.message}`, 'ERROR');
-        ws.close(4001, 'URL inválida');
-        return null;
-    }
-
-    const token = url.searchParams.get('token');
-
+async function verificarAutenticacionPorMensaje(token, logger) {
     if (!token) {
-        logger.log('AUTH', 'Conexión rechazada: token ausente en la query string', 'WARNING');
-        ws.close(4001, 'Token requerido');
+        if (logger) logger.log('AUTH', 'Token ausente en mensaje de autenticación', 'WARNING');
         return null;
     }
-
-    const authData = await verificarToken(token, logger);
-    if (!authData) {
-        ws.close(4001, 'Token inválido o expirado');
-        return null;
-    }
-
-    return authData;
+    return await verificarToken(token, logger);
 }
 
 /**
@@ -113,7 +98,7 @@ function verificarPermiso(ws, accion) {
 }
 
 module.exports = {
-    verificarAutenticacion,
+    verificarAutenticacionPorMensaje,
     verificarPermiso,
     verificarToken
 };

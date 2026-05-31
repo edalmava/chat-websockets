@@ -39,8 +39,8 @@ function esSalaValida(sala) {
 }
 
 // --- CONFIGURACIÓN DE AUTENTICACIÓN Y ROLES DE SUPABASE ---
-const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-const JWT_ALGORITHMS = ['HS256', 'ES256'];
+// Nota: La verificación de tokens usa únicamente JWKS asimétrica (ES256)
+// No se utiliza SUPABASE_JWT_SECRET — se eliminó el soporte HS256 por seguridad
 
 const ROLES = Object.freeze({
     USER: 'user',
@@ -49,6 +49,7 @@ const ROLES = Object.freeze({
 });
 
 const MAX_MUTE_DURATION = 3600; // 1 hora en segundos
+const MAX_USERS_PER_ROOM = 50; // #5: Límite de usuarios simultáneos por sala
 
 const MODERATOR_ACTIONS = ['kick_user', 'mute_user'];
 const ADMIN_ACTIONS = ['cambiar_rol'];
@@ -59,10 +60,9 @@ module.exports = {
     VALIDACION,
     SALAS_POR_DEFECTO,
     esSalaValida,
-    SUPABASE_JWT_SECRET,
-    JWT_ALGORITHMS,
     ROLES,
     MAX_MUTE_DURATION,
+    MAX_USERS_PER_ROOM,
     MODERATOR_ACTIONS,
     ADMIN_ACTIONS
 };

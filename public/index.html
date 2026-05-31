@@ -17,12 +17,12 @@
             
             <!-- Pestañas de Auth -->
             <div id="auth-tabs">
-                <button class="auth-tab active" id="tab-login" onclick="cambiarPestañaAuth('login')">Iniciar Sesión</button>
-                <button class="auth-tab" id="tab-register" onclick="cambiarPestañaAuth('register')">Registrarse</button>
+                <button class="auth-tab active" id="tab-login">Iniciar Sesión</button>
+                <button class="auth-tab" id="tab-register">Registrarse</button>
             </div>
 
             <!-- Formulario de Iniciar Sesión -->
-            <form id="login-form" onsubmit="manejarLoginSubmit(event)">
+            <form id="login-form">
                 <div class="form-group">
                     <input type="email" id="login-email" placeholder="Correo electrónico" required>
                 </div>
@@ -33,7 +33,7 @@
             </form>
 
             <!-- Formulario de Registro -->
-            <form id="register-form" class="hidden" onsubmit="manejarRegistroSubmit(event)">
+            <form id="register-form" class="hidden">
                 <div class="form-group">
                     <input type="text" id="register-displayname" placeholder="Nombre para mostrar" minlength="1" maxlength="50" required>
                 </div>
@@ -88,7 +88,7 @@
                             <option value="moderator">Moderator</option>
                             <option value="admin">Admin</option>
                         </select>
-                        <button id="adminChangeRoleButton" onclick="aplicarCambioRolAdmin()">Asignar Rol</button>
+                        <button id="adminChangeRoleButton">Asignar Rol</button>
                     </div>
                 </section>
             </aside>
@@ -98,7 +98,7 @@
                     <div id="user-identity" class="hidden">
                         <span>Conectado como: <strong id="current-username"></strong></span>
                         <span id="current-user-role" class="role-badge role-user">user</span>
-                        <button id="logoutButton" onclick="logout()">Cerrar Sesión</button>
+                        <button id="logoutButton">Cerrar Sesión</button>
                     </div>
                 </div>
                 <div id="messages"></div>
@@ -137,8 +137,6 @@
     
     <!-- Dependencias del cliente y SDK de Supabase -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="js/config.js"></script>
-    <script src="js/supabaseClient.js"></script>
-    <script src="js/chat.js"></script>
+    <script type="module" src="js/chat.js"></script>
 </body>
 </html>

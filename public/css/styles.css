@@ -861,6 +861,11 @@ button:active {
     color: var(--text-primary);
 }
 
+/* #7: Variantes de toast para notificaciones */
+.toast-error { border-left-color: #ef4444 !important; }
+.toast-warning { border-left-color: #f59e0b !important; }
+.toast-info { border-left-color: #3b82f6 !important; }
+
 @keyframes slideInRight {
     from { transform: translateX(100%); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }

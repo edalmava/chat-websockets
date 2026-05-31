@@ -5,10 +5,10 @@
 const Websocket = require('ws');
 const { isOriginAllowed, sanitizeHtml, sanitizeObject } = require('../utils/security');
 const { validarMensaje, verificarRateLimit, validarRol, validarDuracionMute } = require('../utils/validation');
-const { verificarAutenticacion, verificarPermiso, verificarToken } = require('../middleware/authMiddleware');
+const { verificarAutenticacionPorMensaje, verificarPermiso, verificarToken } = require('../middleware/authMiddleware');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
-const { esSalaValida, SALAS_POR_DEFECTO, ROLES } = require('../config/constants');
+const { esSalaValida, SALAS_POR_DEFECTO, ROLES, MAX_USERS_PER_ROOM } = require('../config/constants');
 
 module.exports = function(wss, logger) {
 
@@ -23,6 +23,12 @@ module.exports = function(wss, logger) {
     // REGISTRO DE USUARIOS SILENCIADOS
     // Map<UUID, { hasta: timestamp, por: displayName }>
     const usuariosSilenciados = new Map();
+
+    // === CONTROL DE CONEXIONES POR IP (A-3) ===
+    const MAX_CONEXIONES_POR_IP = 5;
+    const MAX_INTENTOS_POR_SEGUNDO = 3;
+    const conexionesPorIP = new Map(); // Map<IP, Set<WebSocket>>
+    const intentosConexionPorIP = new Map(); // Map<IP, number[]>
 
     /**
      * Añade un cliente a una sala en el índice
@@ -75,6 +81,11 @@ module.exports = function(wss, logger) {
      */
     function broadcastMessage(obj, sala = null) {
         try {
+            // A-1: Defensa en profundidad — no permitir broadcast global de mensajes de usuario
+            if (!sala && (obj.tipo === 'chat' || obj.tipo === 'user-typing')) {
+                return;
+            }
+
             const sanitized = sanitizeObject(obj);
             const data = JSON.stringify(sanitized);
             
@@ -157,10 +168,67 @@ module.exports = function(wss, logger) {
             return;
         }
 
-        // 2. Validación y Autenticación del Token JWT
-        const authData = await verificarAutenticacion(ws, req, logger);
+        // 1.5 Rate limiting por IP (A-3)
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+            || req.socket.remoteAddress || 'unknown';
+
+        // Límite de tasa de conexión (3 intentos/segundo)
+        const ahora = Date.now();
+        if (!intentosConexionPorIP.has(ip)) {
+            intentosConexionPorIP.set(ip, []);
+        }
+        const timestamps = intentosConexionPorIP.get(ip);
+        const ventana = timestamps.filter(t => ahora - t < 1000);
+        if (ventana.length >= MAX_INTENTOS_POR_SEGUNDO) {
+            logger.log('WARNING', 'ip_rate_limit_exceeded', clientId, { ip });
+            ws.close(1008, 'Demasiadas conexiones. Intenta de nuevo más tarde.');
+            return;
+        }
+        ventana.push(ahora);
+        intentosConexionPorIP.set(ip, ventana);
+
+        // Límite de conexiones simultáneas por IP
+        if (!conexionesPorIP.has(ip)) {
+            conexionesPorIP.set(ip, new Set());
+        }
+        const conexionesIP = conexionesPorIP.get(ip);
+        if (conexionesIP.size >= MAX_CONEXIONES_POR_IP) {
+            logger.log('WARNING', 'ip_max_connections', clientId, { ip, count: conexionesIP.size });
+            ws.close(1008, 'Demasiadas conexiones simultáneas desde esta IP');
+            return;
+        }
+        conexionesIP.add(ws);
+
+        // 2. Autenticación vía primer mensaje (C-2 — no usar query string)
+        const authData = await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+                ws.removeListener('message', authHandler);
+                resolve(null);
+            }, 10000);
+
+            const authHandler = (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    if (msg.tipo === 'auth' && msg.token) {
+                        clearTimeout(timeout);
+                        ws.removeListener('message', authHandler);
+                        resolve(verificarAutenticacionPorMensaje(msg.token, logger));
+                    }
+                } catch (_) { /* ignorar parse errors */ }
+            };
+
+            ws.on('message', authHandler);
+            ws.once('close', () => { clearTimeout(timeout); resolve(null); });
+        });
+
         if (!authData) {
-            // Si el token es inválido o no existe, verificarAutenticacion ya cerró el socket
+            logger.log('WARNING', 'auth_failed', clientId, { ip });
+            conexionesIP.delete(ws);
+            if (conexionesIP.size === 0) {
+                conexionesPorIP.delete(ip);
+                intentosConexionPorIP.delete(ip);
+            }
+            ws.close(4001, 'Autenticación requerida');
             return;
         }
 
@@ -186,8 +254,8 @@ module.exports = function(wss, logger) {
         ws.email = authData.email;
         ws.role = authData.role;
         ws.tokenExp = authData.tokenExp;
-        ws.usuarioIdentificado = true; // El usuario queda autenticado inmediatamente
-        ws.isAlive = true; // Para Heartbeat
+        ws.usuarioIdentificado = true;
+        ws.isAlive = true;
         ws.sala = null;
         ws.messageTimestamps = [];
 
@@ -232,6 +300,14 @@ module.exports = function(wss, logger) {
                     return;
                 }
 
+                // Rate limiting preventivo global para cualquier evento entrante de WS
+                const rateLimitCheck = verificarRateLimit(ws);
+                if (!rateLimitCheck.permitido) {
+                    logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario, tipo: messageData.tipo });
+                    enviarError(ws, rateLimitCheck.error);
+                    return;
+                }
+
                 switch (messageData.tipo) {
                     case 'join':
                         const antiguaSala = ws.sala;
@@ -244,6 +320,15 @@ module.exports = function(wss, logger) {
                             });
                             enviarError(ws, `Sala inválida. Las salas disponibles son: ${SALAS_POR_DEFECTO.join(', ')}`);
                             return;
+                        }
+
+                        // #5: Verificar límite de usuarios en la sala destino
+                        if (antiguaSala !== nuevaSala) {
+                            const salaDestino = salas.get(nuevaSala);
+                            if (salaDestino && salaDestino.size >= MAX_USERS_PER_ROOM) {
+                                enviarError(ws, 'La sala está llena. Intenta en otra sala.');
+                                return;
+                            }
                         }
                         
                         // Si cambia de sala, notificar salida de la antigua y actualizar índice
@@ -286,6 +371,15 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'chat':
+                        // A-1: No permitir chat sin estar en una sala
+                        if (!ws.sala) {
+                            logger.log('WARNING', 'chat_outside_room', clientId, {
+                                username: ws.nombreUsuario
+                            });
+                            enviarError(ws, 'Debes unirte a una sala antes de enviar mensajes');
+                            return;
+                        }
+
                         // Validar si el usuario está silenciado temporalmente
                         if (usuariosSilenciados.has(ws.userId)) {
                             const muteInfo = usuariosSilenciados.get(ws.userId);
@@ -298,12 +392,6 @@ module.exports = function(wss, logger) {
                         }
 
                         const messageStartTime = Date.now();
-                        const rateLimitCheck = verificarRateLimit(ws);
-                        if (!rateLimitCheck.permitido) {
-                            logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario });
-                            enviarError(ws, rateLimitCheck.error);
-                            return;
-                        }
 
                         const validMsg = validarMensaje(messageData.mensaje);
                         if (!validMsg.válido) {
@@ -352,6 +440,28 @@ module.exports = function(wss, logger) {
                         const targetWs = usuariosConectados.get(destinatarioId);
 
                         if (targetWs && targetWs.readyState === Websocket.OPEN) {
+                            // 1. Validación de privacidad: Ambos usuarios deben estar en la misma sala
+                            if (targetWs.sala !== ws.sala) {
+                                logger.log('WARNING', 'webrtc_privacy_violation_blocked', clientId, {
+                                    de: ws.nombreUsuario,
+                                    para: targetWs.nombreUsuario,
+                                    razon: 'Intento de señalización WebRTC a usuario en otra sala'
+                                });
+                                enviarError(ws, 'No está permitido iniciar chats privados con usuarios de otras salas');
+                                break;
+                            }
+
+                            // 2. Validación de tamaño: Evitar ataques DoS por envío de payloads masivos
+                            const dataString = JSON.stringify(messageData.data || {});
+                            if (dataString.length > 15000) {
+                                logger.log('WARNING', 'webrtc_payload_too_large', clientId, {
+                                    de: ws.nombreUsuario,
+                                    length: dataString.length
+                                });
+                                enviarError(ws, 'Payload de señalización WebRTC demasiado grande');
+                                break;
+                            }
+
                             targetWs.send(JSON.stringify({
                                 tipo: 'webrtc-signal',
                                 de: ws.userId,
@@ -407,10 +517,6 @@ module.exports = function(wss, logger) {
                             enviarError(ws, 'No tienes permisos para expulsar usuarios');
                             break;
                         }
-                        if (!verificarRateLimit(ws).permitido) {
-                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
-                            break;
-                        }
 
                         const targetKickId = messageData.payload?.userId;
                         const motivoKick = messageData.payload?.motivo || 'Expulsado por moderador';
@@ -449,10 +555,6 @@ module.exports = function(wss, logger) {
                     case 'mute_user':
                         if (!verificarPermiso(ws, 'mute_user')) {
                             enviarError(ws, 'No tienes permisos para silenciar usuarios');
-                            break;
-                        }
-                        if (!verificarRateLimit(ws).permitido) {
-                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
                             break;
                         }
 
@@ -506,10 +608,6 @@ module.exports = function(wss, logger) {
                             enviarError(ws, 'No tienes permisos para cambiar roles');
                             break;
                         }
-                        if (!verificarRateLimit(ws).permitido) {
-                            enviarError(ws, 'Demasiadas solicitudes. Intenta de nuevo en un momento.');
-                            break;
-                        }
 
                         const targetRolId = messageData.payload?.userId;
                         const nuevoRol = messageData.payload?.nuevoRol;
@@ -517,6 +615,12 @@ module.exports = function(wss, logger) {
                         const rolVal = validarRol(nuevoRol);
                         if (!rolVal.válido) {
                             enviarError(ws, rolVal.error);
+                            break;
+                        }
+
+                        // #6: No permitir auto-degradación
+                        if (targetRolId === ws.userId) {
+                            enviarError(ws, 'No puedes cambiar tu propio rol. Solicita a otro administrador.');
                             break;
                         }
 
@@ -570,8 +674,8 @@ module.exports = function(wss, logger) {
                 totalConexiones: wss.clients.size - 1 
             });
             
-            // Eliminar del registro global
-            if (ws.userId) {
+            // Eliminar del registro global sólo si este socket es el registrado actualmente
+            if (ws.userId && usuariosConectados.get(ws.userId) === ws) {
                 usuariosConectados.delete(ws.userId);
             }
 
@@ -586,6 +690,15 @@ module.exports = function(wss, logger) {
                 
                 enviarListaUsuarios(ws.sala);
             }
+
+            // A-3: Limpiar registro de IP al desconectar
+            if (conexionesPorIP.has(ip)) {
+                conexionesPorIP.get(ip).delete(ws);
+                if (conexionesPorIP.get(ip).size === 0) {
+                    conexionesPorIP.delete(ip);
+                    intentosConexionPorIP.delete(ip);
+                }
+            }
         });
 
         ws.on('error', (error) => {
@@ -598,8 +711,32 @@ module.exports = function(wss, logger) {
         const usuariosIdentificados = Array.from(wss.clients).filter(c => c.usuarioIdentificado).length;
         logger.log('INFO', 'stats_report', 'system', { usuariosActivos: usuariosIdentificados, totalConexiones: wss.clients.size });
 
+        const ahora = Math.floor(Date.now() / 1000);
+
         // Verificar Heartbeat para cada cliente
         wss.clients.forEach((ws) => {
+            // 1. Control de expiración activa del token JWT de Supabase
+            if (ws.usuarioIdentificado && ws.tokenExp) {
+                // Margen de gracia de 2 minutos para evitar desconexiones por latencia
+                if (ahora > (ws.tokenExp + 120)) {
+                    logger.log('WARNING', 'session_expired_active_kick', ws.id, {
+                        username: ws.nombreUsuario,
+                        userId: ws.userId,
+                        tokenExp: ws.tokenExp
+                    });
+                    
+                    ws.send(JSON.stringify({
+                        tipo: 'error',
+                        mensaje: 'Tu sesión ha expirado. Por favor, vuelve a ingresar.',
+                        timestamp: new Date().toISOString()
+                    }));
+                    
+                    ws.close(4001, 'Token JWT Expirado');
+                    return;
+                }
+            }
+
+            // 2. Heartbeat normal
             if (ws.isAlive === false) {
                 logger.log('INFO', 'client_terminated_heartbeat', ws.id, { username: ws.nombreUsuario });
                 return ws.terminate();
