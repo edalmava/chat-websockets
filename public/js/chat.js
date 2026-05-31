@@ -96,17 +96,11 @@ function manejarMensajeServidor(data) {
             break;
 
         case 'join-success':
-            const esPrimerIngreso = !salaActual;
             salaActual = data.sala;
-
-            if (esPrimerIngreso) {
-                uiManager.mostrarPantallaChat();
-            } else {
-                uiManager.limpiarMensajesPublicos();
-                usuariosEscribiendo.clear();
-                uiManager.actualizarIndicadorEscritura(usuariosEscribiendo);
-            }
-            
+            uiManager.limpiarMensajesPublicos();
+            usuariosEscribiendo.clear();
+            uiManager.actualizarIndicadorEscritura(usuariosEscribiendo);
+            uiManager.mostrarPantallaChat();
             uiManager.actualizarSalaActiva(salaActual);
             break;
 
@@ -216,6 +210,7 @@ async function logout() {
         miUserId = '';
         salaActual = '';
         usuariosEscribiendo.clear();
+        uiManager.limpiarMensajesPublicos();
         
         uiManager.mostrarPantallaLogin();
     } finally {

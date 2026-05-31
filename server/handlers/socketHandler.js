@@ -299,12 +299,14 @@ module.exports = function(wss, logger) {
                     return;
                 }
 
-                // Rate limiting preventivo global para cualquier evento entrante de WS
-                const rateLimitCheck = verificarRateLimit(ws);
-                if (!rateLimitCheck.permitido) {
-                    logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario, tipo: messageData.tipo });
-                    enviarError(ws, rateLimitCheck.error);
-                    return;
+                // Rate limiting preventivo global (excluye webrtc-signal para evitar falsos positivos por ráfagas de ICE candidates)
+                if (messageData.tipo !== 'webrtc-signal') {
+                    const rateLimitCheck = verificarRateLimit(ws);
+                    if (!rateLimitCheck.permitido) {
+                        logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario, tipo: messageData.tipo });
+                        enviarError(ws, rateLimitCheck.error);
+                        return;
+                    }
                 }
 
                 switch (messageData.tipo) {
