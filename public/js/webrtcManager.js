@@ -4,6 +4,8 @@
 
 const p2pManager = new Map(); // Map<targetUserId, { pc, dc, displayName, messages, unread, status, candidateBuffer }>
 const MAX_ICE_CANDIDATES = 50; // #4: Límite de candidatos ICE para evitar DoS por memoria
+const MAX_P2P_CONNECTIONS = 10; // #5: Máximo de conexiones P2P simultáneas por cliente
+const MAX_P2P_MESSAGE_LENGTH = 5000; // #4: Máximo de caracteres por mensaje P2P
 let activeP2PUser = null; // targetUserId actual de la ventana activa
 let p2pEstaEscribiendo = false;
 let p2pTypingTimeout = null;
@@ -65,6 +67,11 @@ export function establecerUsuarioP2PActivo(userId) {
  * Inicia una nueva conexión PeerConnection (WebRTC) como emisor (Offer)
  */
 export async function iniciarConexionP2P(targetUserId, displayName, callbacks = {}) {
+    if (p2pManager.size >= MAX_P2P_CONNECTIONS) {
+        console.warn(`[WebRTC] Límite de ${MAX_P2P_CONNECTIONS} conexiones P2P alcanzado`);
+        return;
+    }
+
     console.log(`[WebRTC] Iniciando conexión con: ${displayName} (${targetUserId})`);
 
     const config = await esperarIceConfig();
@@ -166,6 +173,10 @@ function configurarDC(targetUserId, dc, callbacks) {
 export async function manejarSenalWebRTC(de, deNombre, senal, callbacks = {}) {
     // Si es una oferta entrante y no tenemos conexión previa, mostramos invitación
     if (senal.tipo === 'offer' && !p2pManager.has(de)) {
+        if (p2pManager.size >= MAX_P2P_CONNECTIONS) {
+            console.warn(`[WebRTC] Límite de ${MAX_P2P_CONNECTIONS} conexiones P2P alcanzado, oferta de ${deNombre} rechazada`);
+            return;
+        }
         const config = await esperarIceConfig();
         const pc = new RTCPeerConnection(config);
         const connection = { 
@@ -273,6 +284,10 @@ function enviarPorDC(targetUserId, tipo, payload) {
  * Envía un mensaje de chat privado P2P
  */
 export function enviarMensajeChatP2P(targetUserId, texto) {
+    if (typeof texto !== 'string' || texto.length > MAX_P2P_MESSAGE_LENGTH) {
+        console.warn(`[WebRTC] Mensaje P2P saliente excede el límite de ${MAX_P2P_MESSAGE_LENGTH} caracteres`);
+        return null;
+    }
     const enviado = enviarPorDC(targetUserId, 'chat', texto);
     if (enviado) {
         const conn = p2pManager.get(targetUserId);
@@ -301,6 +316,10 @@ function recibirMensajeP2P(deUserId, dataRaw, callbacks) {
 
         switch (data.tipo) {
             case 'chat':
+                if (typeof data.payload !== 'string' || data.payload.length > MAX_P2P_MESSAGE_LENGTH) {
+                    console.warn(`[WebRTC] Mensaje P2P de ${conn.displayName} excede el límite de ${MAX_P2P_MESSAGE_LENGTH} caracteres`);
+                    return;
+                }
                 conn.messages.push({ de: conn.displayName, texto: data.payload, time });
                 
                 if (activeP2PUser === deUserId) {

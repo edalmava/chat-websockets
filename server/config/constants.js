@@ -23,6 +23,11 @@ const ALLOWED_ORIGINS = [
     // 'https://tudominio.com'
 ];
 
+const IP_RATE_LIMIT = {
+    MAX_CONEXIONES_POR_IP: parseInt(process.env.IP_MAX_CONEXIONES, 10) || 45,
+    MAX_INTENTOS_POR_SEGUNDO: parseInt(process.env.IP_MAX_INTENTOS, 10) || 15
+};
+
 const VALIDACION = {
     USERNAME_MIN: 1,
     USERNAME_MAX: 50,
@@ -57,6 +62,7 @@ const ADMIN_ACTIONS = ['cambiar_rol'];
 module.exports = {
     PORT,
     ALLOWED_ORIGINS,
+    IP_RATE_LIMIT,
     VALIDACION,
     SALAS_POR_DEFECTO,
     esSalaValida,

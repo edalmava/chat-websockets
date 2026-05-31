@@ -8,7 +8,7 @@ const { validarMensaje, verificarRateLimit, validarRol, validarDuracionMute } = 
 const { verificarAutenticacionPorMensaje, verificarPermiso, verificarToken } = require('../middleware/authMiddleware');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
-const { esSalaValida, SALAS_POR_DEFECTO, ROLES, MAX_USERS_PER_ROOM } = require('../config/constants');
+const { esSalaValida, SALAS_POR_DEFECTO, ROLES, MAX_USERS_PER_ROOM, IP_RATE_LIMIT } = require('../config/constants');
 
 module.exports = function(wss, logger) {
 
@@ -25,8 +25,7 @@ module.exports = function(wss, logger) {
     const usuariosSilenciados = new Map();
 
     // === CONTROL DE CONEXIONES POR IP (A-3) ===
-    const MAX_CONEXIONES_POR_IP = 5;
-    const MAX_INTENTOS_POR_SEGUNDO = 3;
+    const { MAX_CONEXIONES_POR_IP, MAX_INTENTOS_POR_SEGUNDO } = IP_RATE_LIMIT;
     const conexionesPorIP = new Map(); // Map<IP, Set<WebSocket>>
     const intentosConexionPorIP = new Map(); // Map<IP, number[]>
 

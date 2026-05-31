@@ -9,6 +9,7 @@ let reintentosConexion = 0;
 const MAX_REINTENTOS = 5;
 let reconexionTimeout = null;
 let cierreIntencional = false;
+let tokenActual = null;
 
 function obtenerUrlServer() {
     const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -20,7 +21,12 @@ function obtenerUrlServer() {
  * @param {string} token - Token JWT de Supabase.
  * @param {object} handlers - Callbacks para eventos: { onOpen, onClose, onMessage, onError }
  */
+export function setToken(token) {
+    tokenActual = token;
+}
+
 export function conectar(token, handlers = {}) {
+    tokenActual = token;
     if (socket) {
         cierreIntencional = true;
         socket.close();
@@ -53,7 +59,7 @@ export function conectar(token, handlers = {}) {
                 reintentosConexion++;
                 const delay = 1000 * Math.pow(2, reintentosConexion);
                 console.log(`[WS] Reconectando en ${delay}ms (intento ${reintentosConexion}/${MAX_REINTENTOS})...`);
-                reconexionTimeout = setTimeout(() => conectar(token, handlers), delay);
+                reconexionTimeout = setTimeout(() => conectar(tokenActual, handlers), delay);
             } else {
                 if (handlers.onReconnectionFailed) handlers.onReconnectionFailed();
             }

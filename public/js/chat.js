@@ -278,7 +278,7 @@ function getUICallbacks() {
                     miUserId = data.user.id;
                     conectar();
                 } else {
-                    alert('¡Cuenta registrada! Por favor verifica tu bandeja de entrada para confirmar tu correo antes de iniciar sesión.');
+                    uiManager.mostrarNotificacion('¡Cuenta registrada! Verifica tu bandeja de entrada para confirmar tu correo.', 'info', 10000);
                     uiManager.cambiarPestañaAuth('login');
                 }
             }
@@ -435,11 +435,14 @@ async function inicializarApp() {
     onCambioEstadoAuth((event, session) => {
         const socketState = wsManager.obtenerEstadoSocket();
         
-        if (event === 'TOKEN_REFRESHED' && socketState === WebSocket.OPEN) {
-            wsManager.enviarMensaje({
-                tipo: 'token_refresh',
-                token: session.access_token
-            });
+        if (event === 'TOKEN_REFRESHED') {
+            wsManager.setToken(session.access_token);
+            if (socketState === WebSocket.OPEN) {
+                wsManager.enviarMensaje({
+                    tipo: 'token_refresh',
+                    token: session.access_token
+                });
+            }
         }
         if (event === 'SIGNED_OUT') {
             logout();

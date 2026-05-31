@@ -362,6 +362,78 @@ export function actualizarSalaActiva(salaActual) {
 }
 
 /**
+ * Muestra un modal con un campo de texto, reemplazando prompt()
+ * @param {string} titulo - Título del modal
+ * @param {string} placeholder - Texto placeholder del input
+ * @param {string} valorDefecto - Valor inicial del input
+ * @param {string} textoBoton - Texto del botón de confirmación
+ * @returns {Promise<string|null>} Texto ingresado o null si cancela
+ */
+export function mostrarModalInput(titulo, placeholder = '', valorDefecto = '', textoBoton = 'Aceptar') {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.style.cssText = `
+            position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.5);display:flex;align-items:center;
+            justify-content:center;z-index:2000;
+        `;
+
+        const box = document.createElement('div');
+        box.className = 'modal-input-box';
+        box.style.cssText = `
+            background:#fff;border-radius:12px;padding:24px;min-width:320px;
+            max-width:440px;box-shadow:0 8px 32px rgba(0,0,0,0.2);
+        `;
+        box.innerHTML = `
+            <h3 style="margin:0 0 16px;font-size:16px;color:#1f2937;">${sanitizeHtml(titulo)}</h3>
+            <input type="text" class="modal-input" value="${sanitizeHtml(valorDefecto)}"
+                placeholder="${sanitizeHtml(placeholder)}"
+                style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;
+                    font-size:14px;box-sizing:border-box;margin-bottom:16px;">
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="modal-btn-cancel" style="padding:8px 16px;border:1px solid #d1d5db;
+                    border-radius:8px;background:#fff;cursor:pointer;font-size:14px;">Cancelar</button>
+                <button class="modal-btn-confirm" style="padding:8px 16px;border:none;
+                    border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;font-size:14px;
+                    font-weight:600;">${sanitizeHtml(textoBoton)}</button>
+            </div>
+        `;
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        const input = box.querySelector('.modal-input');
+        const btnConfirm = box.querySelector('.modal-btn-confirm');
+        const btnCancel = box.querySelector('.modal-btn-cancel');
+
+        function cerrar(valor) {
+            overlay.remove();
+            resolve(valor);
+        }
+
+        btnConfirm.onclick = () => {
+            const val = input.value.trim();
+            cerrar(val || null);
+        };
+
+        btnCancel.onclick = () => cerrar(null);
+
+        overlay.onclick = (e) => {
+            if (e.target === overlay) cerrar(null);
+        };
+
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') btnConfirm.click();
+            if (e.key === 'Escape') btnCancel.click();
+        };
+
+        input.focus();
+        input.select();
+    });
+}
+
+/**
  * Renderiza la lista de usuarios conectados en la sala actual
  */
 export function actualizarListaUsuarios(usuarios, miUserId, miRol, callbacks = {}) {
@@ -395,10 +467,15 @@ export function actualizarListaUsuarios(usuarios, miUserId, miRol, callbacks = {
             const kickBtn = document.createElement('button');
             kickBtn.textContent = 'Expulsar';
             kickBtn.className = 'btn-mod-action btn-kick';
-            kickBtn.onclick = (e) => {
+            kickBtn.onclick = async (e) => {
                 e.stopPropagation();
-                const motivo = prompt(`Expulsar a ${usuario.displayName}. Motivo:`, 'Infracción de las reglas');
-                if (motivo !== null && callbacks.onKickUser) {
+                const motivo = await mostrarModalInput(
+                    `Expulsar a ${usuario.displayName}`,
+                    'Motivo de la expulsión',
+                    'Infracción de las reglas',
+                    'Expulsar'
+                );
+                if (motivo && callbacks.onKickUser) {
                     callbacks.onKickUser(usuario.userId, motivo);
                 }
             };
@@ -407,15 +484,20 @@ export function actualizarListaUsuarios(usuarios, miUserId, miRol, callbacks = {
             const muteBtn = document.createElement('button');
             muteBtn.textContent = 'Mute';
             muteBtn.className = 'btn-mod-action btn-mute';
-            muteBtn.onclick = (e) => {
+            muteBtn.onclick = async (e) => {
                 e.stopPropagation();
-                const segs = prompt(`Silenciar a ${usuario.displayName} por cuántos segundos? (máx 3600)`, '60');
-                if (segs) {
-                    const num = parseInt(segs);
-                    if (!isNaN(num) && num > 0) {
+                const input = await mostrarModalInput(
+                    `Silenciar a ${usuario.displayName}`,
+                    'Duración en segundos (máx 3600)',
+                    '60',
+                    'Silenciar'
+                );
+                if (input) {
+                    const num = parseInt(input, 10);
+                    if (!isNaN(num) && num > 0 && num <= 3600) {
                         if (callbacks.onMuteUser) callbacks.onMuteUser(usuario.userId, num);
                     } else {
-                        alert('Número inválido');
+                        mostrarNotificacion('Ingresa un número entre 1 y 3600', 'warning', 3000);
                     }
                 }
             };

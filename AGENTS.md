@@ -40,20 +40,23 @@ Frontend: serve `public/` separately (e.g. Live Server on :5500) from an origin 
 - **Roles**: `user` → `moderator` → `admin` hierarchy enforced in `verificarPermiso()`. Self-demotion blocked server-side.
 - **Auth**: JWT from Supabase Auth, verified against Supabase JWKS endpoint via **ES256 only**. Token sent as **first WS message**, not in URL.
 - **Client ID**: random 9-char base-36 string generated per connection (`.id`), separate from Supabase `userId` (UUID).
-- **IP Rate Limiting** (in-memory): max 5 concurrent connections and 3 attempts/s per IP.
+- **IP Rate Limiting** (in-memory): max 45 concurrent connections and 15 attempts/s per IP (configurable via `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS` env vars).
 - **ICE Candidate Limit**: max 50 candidates per P2P connection (dropped before `remoteDescription` to avoid DoS).
+- **P2P Connection Limit**: max 10 simultaneous P2P connections per client. P2P messages capped at 5000 chars.
 
 ## Common tasks
 - Add an allowed origin → edit `ALLOWED_ORIGINS` in `server/config/constants.js`
 - Add a room → edit `SALAS_POR_DEFECTO` in `server/config/constants.js`
 - Generate dev SSL certs → `node generate-certs.js` (writes to `public/certs/`)
-- Tweak rate limits → edit `VALIDACION` in `server/config/constants.js` or `IP_RATE_LIMIT` section
+- Tweak rate limits → edit `VALIDACION` in `server/config/constants.js` or `IP_RATE_LIMIT` section (or set `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS` env vars)
 - Tweak ICE limit → edit `MAX_ICE_CANDIDATES` in `constants.js` (currently 50)
 
 ## Security notes
-- `.env` is currently committed — contains real `TURN_SECRET`. Move to env vars or secret store for any non-local deployment.
+- `.env` is gitignored (not committed). Keep it that way. Contains real `TURN_SECRET`. Move to env vars or secret store for any non-local deployment.
 - `SUPABASE_JWT_SECRET` env var was removed — auth uses asymmetric JWKS only.
 - All user input is sanitized both client-side and server-side via `sanitizeHtml` / `sanitizeObject`.
 - WebRTC signaling is relay-only (no media through server).
 - No inline event handlers in HTML — all listeners attached via JS in uiManager.js.
 - No `alert()` calls in client code — all notifications via toast UI.
+- No `prompt()` calls — replaced by a custom modal input (`mostrarModalInput` in `uiManager.js`).
+- P2P DataChannel messages are validated client-side (payload capped at 5000 chars).

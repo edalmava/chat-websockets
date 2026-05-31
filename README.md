@@ -11,13 +11,16 @@ Plataforma de comunicación en tiempo real con WebSockets para chats grupales y 
 - **Autenticación JWT (ES256 asimétrica):** Token verificado contra Supabase JWKS. El token se envía como primer mensaje WebSocket, **no en la URL** (elimina exposición en logs y referers).
 - **Protección contra XSS:** Sanitización recursiva de objetos y HTML tanto en el cliente como en el servidor.
 - **Rate Limiting por usuario:** Sistema de control de inundación (spam) configurable (5 msg/s).
-- **Rate Limiting por IP:** Máximo 5 conexiones simultáneas y 3 intentos/segundo por dirección IP.
+- **Rate Limiting por IP:** Máximo 45 conexiones simultáneas y 15 intentos/segundo por dirección IP (configurable via `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS`).
 - **Límite de usuarios por sala:** Máximo 50 usuarios simultáneos por sala.
 - **Control de sesiones duplicadas:** Detección y cierre de sesiones simultáneas del mismo usuario.
 - **Jerarquía de roles:** `user` → `moderator` → `admin` con permisos granulados para acciones de moderación.
 - **Expiración activa de sesión:** Heartbeat cada 30s que desconecta tokens expirados (con margen de 2min).
-- **Reconexión Inteligente:** Cliente con algoritmo de backoff exponencial para recuperar conexiones perdidas.
+- **Reconexión Inteligente:** Cliente con algoritmo de backoff exponencial para recuperar conexiones perdidas. Usa el token JWT más reciente (actualizado via `TOKEN_REFRESHED`).
 - **Límite de candidatos ICE:** Protección contra DoS por buffer de candidatos WebRTC (máx 50).
+- **Límite de conexiones P2P:** Máximo 10 conexiones WebRTC simultáneas por cliente.
+- **Límite de mensajes P2P:** Payload máximo de 5000 caracteres por mensaje en DataChannel.
+- **Sin `prompt()` ni `alert()`:** Reemplazados por modal input (`mostrarModalInput`) y toasts (`mostrarNotificacion`).
 
 ### 🚀 Comunicación Avanzada
 - **Salas de Chat (Rooms):** Soporte nativo para 10 canales (General, Desarrollo, Soporte, Random, Gaming, Música, Cine, Deportes, Tecnología, Off-Topic).
@@ -80,8 +83,12 @@ websockets/
   TURN_URL_TCP=turn:turn.ejemplo.com:5349?transport=tcp
   STUN_URL=stun:stun.ejemplo.com:5349
   TURN_REALM=turn.ejemplo.com
+
+  # Opcionales (valores por defecto: 45 y 15):
+  IP_MAX_CONEXIONES=45
+  IP_MAX_INTENTOS=15
   ```
-  > Nota: `SUPABASE_JWT_SECRET` ya no es necesario. La verificación de tokens usa exclusivamente JWKS asimétrica (ES256).
+  > Nota: La verificación de tokens usa exclusivamente JWKS asimétrica (ES256). No se necesita `SUPABASE_JWT_SECRET`.
 
 ### 2. Instalación
 ```bash
@@ -116,14 +123,17 @@ Abre `public/index.html` con un servidor local (Live Server en puerto 5500) cuyo
 |--------|-------------|----------------|
 | Autenticación vía mensaje | Token JWT no viaja en query string | `wsManager.js` + `socketHandler.js` |
 | Solo ES256 asimétrica | Eliminado soporte HS256 (simétrico) | `authMiddleware.js` |
-| Rate limiting por IP | 5 conexiones simultáneas, 3/s | `socketHandler.js` |
+| Token actualizable en reconexión | Usa el último token JWT (via `TOKEN_REFRESHED`) | `wsManager.js` + `chat.js` |
+| Rate limiting por IP | 45 conexiones simultáneas, 15/s (configurable) | `socketHandler.js` + `constants.js` |
 | Límite de usuarios por sala | Máximo 50 por sala | `socketHandler.js` + `constants.js` |
 | Límite de candidatos ICE | Máximo 50 por conexión P2P | `webrtcManager.js` |
+| Límite de conexiones P2P | Máximo 10 simultáneas por cliente | `webrtcManager.js` |
+| Límite de mensajes P2P | Máximo 5000 caracteres por mensaje | `webrtcManager.js` |
 | Chat solo en sala | Mensajes requieren join previo | `socketHandler.js` |
 | Auto-degradación bloqueada | Admin no puede cambiarse rol a sí mismo | `socketHandler.js` |
 | Heartbeat con expiración | Desconexión automática de tokens vencidos | `socketHandler.js` (interval 30s) |
 | Sin funciones globales | Todos los event listeners via JS | `index.html` + `uiManager.js` |
-| Notificaciones UI | Reemplazo de alert() nativa | `uiManager.js` + `styles.css` |
+| Notificaciones UI | Reemplazo de alert() y prompt() nativas | `uiManager.js` + `styles.css` |
 
 ---
 
@@ -142,15 +152,16 @@ Logs estructurados (JSON) en `logs/` con:
 ## 📝 Roadmap
 
 - [x] Autenticación JWT con Supabase (ES256 vía JWKS)
-- [x] Rate limiting por IP y por usuario
-- [x] Límite de usuarios por sala
-- [x] Protección contra DoS en WebRTC (candidatos ICE)
-- [x] Notificaciones UI no bloqueantes
+- [x] Rate limiting por IP y por usuario (configurable vía env)
+- [x] Límite de usuarios por sala (50)
+- [x] Protección contra DoS en WebRTC (candidatos ICE, límite de conexiones P2P)
+- [x] Notificaciones UI no bloqueantes (sin alert() ni prompt())
+- [x] Jerarquía de roles validada en servidor para moderación
+- [x] Reconexión con token JWT actualizado
 - [ ] Persistencia de historial de mensajes públicos en base de datos
 - [ ] Transferencia de archivos mediante WebRTC DataChannels
 - [ ] Soporte para llamadas de audio/video P2P
 - [ ] Re-validación de JWT en cada acción de moderación
-- [ ] Jerarquía de roles validada en servidor para moderación
 
 ---
 
