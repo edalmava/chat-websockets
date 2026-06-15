@@ -1,0 +1,6 @@
+{
+  "name": "ChatSphere",
+  "description": "Un prototipo interactivo de mensajería con pantallas de chat privado, salas públicas, y transiciones fluidas de glassmorphism.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
