@@ -23,6 +23,7 @@ export default function ChatPrivado({
   const p2pTypingStatus = useChatStore((state) => state.p2pTypingStatus[targetUser.id]);
   const sendP2PTyping = useChatStore((state) => state.sendP2PTyping);
   const marcarVistoP2P = useChatStore((state) => state.marcarVistoP2P);
+  const terminarP2PChat = useChatStore((state) => state.terminarP2PChat);
 
   const [escribiendoLocal, setEscribiendoLocal] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -128,6 +129,13 @@ export default function ChatPrivado({
 
         {/* Right Buttons */}
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => terminarP2PChat(targetUser.id)}
+            className="active:scale-95 transition-transform text-red-400 hover:bg-red-500/15 p-2 rounded-full flex items-center justify-center"
+            title="Finalizar chat P2P"
+          >
+            <span className="material-symbols-outlined text-xl">link_off</span>
+          </button>
           <button className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center">
             <span className="material-symbols-outlined text-xl">videocam</span>
           </button>

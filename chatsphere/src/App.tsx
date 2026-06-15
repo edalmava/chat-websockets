@@ -82,6 +82,13 @@ export default function App() {
   const activeThread = p2pThreads.find(t => t.id === activeP2PUserId);
   const activeP2PMessages = activeP2PUserId ? (p2pMessages[activeP2PUserId] || []) : [];
 
+  // Agregar fallback de navegación — ejecutado después del render para evitar setState durante render
+  useEffect(() => {
+    if (currentScreen === 'chat-privado' && !activeP2PUserId) {
+      navigateTo('mensajes-privados', 'push_back');
+    }
+  }, [currentScreen, activeP2PUserId, navigateTo]);  
+
   return (
     <div className="relative w-full min-h-screen overflow-x-hidden bg-[#0a0a0b]">
       {/* Connection status badge (fixed bottom right) */}
@@ -93,7 +100,7 @@ export default function App() {
       )}
 
       {/* Floating Notifications (Toasts) */}
-      <div className="fixed top-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none select-none">
+      <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 max-w-sm w-full pointer-events-none select-none">
         <AnimatePresence>
           {notifications.map((n) => (
             <motion.div
@@ -163,29 +170,15 @@ export default function App() {
           {currentScreen === 'mensajes-privados' && (
             <MensajesPrivados
               chatThreads={p2pThreads}
-              onSelectAlex={() => {
-                // Selecciona el hilo de Alex o inicia P2P. Usaremos esto genérico
-                // Aunque la prop se llame onSelectAlex, para mantener compatibilidad
-                // con el mockup, podemos mapearlo a iniciar la conversación P2P real
-                // de Alex Rivera o abrir la última conversación activa.
-                const alex = p2pThreads.find(t => t.name.toLowerCase().includes('alex'));
-                if (alex) {
-                  startP2PChat(alex.id, alex.name);
-                } else {
-                  // Si no existe, podemos crear uno mockeando el ID o abriendo la lista
-                  startP2PChat('alex', 'Alex Rivera');
-                }
-                navigateTo('chat-privado', 'push');
-              }}
-              onSelectThread={(id, name) => {
-                startP2PChat(id, name);
+              onSelectThread={async (id, name) => {
+                await startP2PChat(id, name);
                 navigateTo('chat-privado', 'push');
               }}
               onNavigateToRooms={() => {
                 navigateTo('lista-salas', 'none');
               }}
             />
-          )}
+          )}        
 
           {currentScreen === 'chat-privado' && activeP2PUserId && (
             <ChatPrivado

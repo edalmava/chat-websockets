@@ -3,14 +3,12 @@ import { ChatThread } from '../types';
 import { useChatStore } from '../stores/useChatStore';
 
 interface MensajesPrivadosProps {
-  onSelectAlex: () => void;
   onSelectThread?: (id: string, name: string) => void;
   onNavigateToRooms: () => void;
   chatThreads: ChatThread[];
 }
 
 export default function MensajesPrivados({
-  onSelectAlex,
   onSelectThread,
   onNavigateToRooms,
   chatThreads,
@@ -28,18 +26,16 @@ export default function MensajesPrivados({
   );
 
   const handleThreadClick = (thread: ChatThread) => {
-    if (thread.id === 'alex') {
-      onSelectAlex();
-    } else if (onSelectThread) {
+    if (onSelectThread) {
       onSelectThread(thread.id, thread.name);
     }
   };
 
-  const handleUserStoryClick = (userId: string, displayName: string) => {
+  const handleUserStoryClick = async (userId: string, displayName: string) => {
     if (onSelectThread) {
-      onSelectThread(userId, displayName);
+      await onSelectThread(userId, displayName);
     } else {
-      startP2PChat(userId, displayName);
+      await startP2PChat(userId, displayName);
       navigateTo('chat-privado', 'push');
     }
   };

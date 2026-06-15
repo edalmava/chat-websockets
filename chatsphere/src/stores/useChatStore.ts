@@ -62,6 +62,7 @@ interface ChatState {
   acceptP2PInvitation: (deUserId: string, senal: any) => Promise<void>;
   rejectP2PInvitation: (deUserId: string) => void;
   closeP2PChat: (targetUserId: string) => void;
+  terminarP2PChat: (targetUserId: string) => void;
   marcarVistoP2P: (targetUserId: string) => void;
   
   // Moderación / Admin
@@ -103,7 +104,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           : [...state.p2pThreads, {
               id: targetUserId,
               name: conn.displayName,
-              avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD-1WPQyvPdB_W9yAS8mDv1GogaiorYmzPcqwMT0IOdQeBSgksNqGLmAoAOA1Mw76xVJvRhONcv5bMaC-btiAedIU7FIDlyMDTQKrKX7iUeuKzwVcXeHKiyqYLkCKF4jH-5FbBtkd59apboFgifmb6HUFecot9foRt3-sOAVnrP8CbzTDyRlAyI55KI1RywWSQTCTvD8ZRomOhiUWLymFX1XbV8EWWzIAj7HLjeNN2HwumTy3jCDd9-4_cSLz_eTSzVCnfoNQM5ueY',
+              avatar: '',
               isOnline: true,
               lastMessage: 'Conexión WebRTC establecida',
               timeAgo: 'Ahora',
@@ -576,7 +577,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             : [...state.p2pThreads, {
                 id: targetUserId,
                 name: displayName,
-                avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD-1WPQyvPdB_W9yAS8mDv1GogaiorYmzPcqwMT0IOdQeBSgksNqGLmAoAOA1Mw76xVJvRhONcv5bMaC-btiAedIU7FIDlyMDTQKrKX7iUeuKzwVcXeHKiyqYLkCKF4jH-5FbBtkd59apboFgifmb6HUFecot9foRt3-sOAVnrP8CbzTDyRlAyI55KI1RywWSQTCTvD8ZRomOhiUWLymFX1XbV8EWWzIAj7HLjeNN2HwumTy3jCDd9-4_cSLz_eTSzVCnfoNQM5ueY',
+                avatar: '',
                 isOnline: false,
                 lastMessage: 'Conectando...',
                 timeAgo: 'Ahora',
@@ -638,7 +639,7 @@ export const useChatStore = create<ChatState>((set, get) => {
             : [...state.p2pThreads, {
                 id: deUserId,
                 name: conn.displayName,
-                avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD-1WPQyvPdB_W9yAS8mDv1GogaiorYmzPcqwMT0IOdQeBSgksNqGLmAoAOA1Mw76xVJvRhONcv5bMaC-btiAedIU7FIDlyMDTQKrKX7iUeuKzwVcXeHKiyqYLkCKF4jH-5FbBtkd59apboFgifmb6HUFecot9foRt3-sOAVnrP8CbzTDyRlAyI55KI1RywWSQTCTvD8ZRomOhiUWLymFX1XbV8EWWzIAj7HLjeNN2HwumTy3jCDd9-4_cSLz_eTSzVCnfoNQM5ueY',
+                avatar: '',
                 isOnline: false,
                 lastMessage: 'Conectando...',
                 timeAgo: 'Ahora',
@@ -662,6 +663,25 @@ export const useChatStore = create<ChatState>((set, get) => {
     closeP2PChat: (targetUserId) => {
       webrtcManager.establecerUsuarioP2PActivo(null);
       set({ activeP2PUserId: null });
+    },
+
+    terminarP2PChat: (targetUserId) => {
+      webrtcManager.cerrarConexionP2P(targetUserId, 'Chat finalizado', getWebRTCCallbacks());
+
+      set((state) => {
+        const { [targetUserId]: _msgs, ...restoMensajes } = state.p2pMessages;
+        const { [targetUserId]: _conn, ...restoEstados } = state.p2pConnectionStatus;
+        const { [targetUserId]: _typ, ...restoEscribiendo } = state.p2pTypingStatus;
+        return {
+          activeP2PUserId: null,
+          p2pThreads: state.p2pThreads.filter(t => t.id !== targetUserId),
+          p2pMessages: restoMensajes,
+          p2pConnectionStatus: restoEstados,
+          p2pTypingStatus: restoEscribiendo,
+        };
+      });
+
+      get().navigateTo('mensajes-privados', 'push_back');
     },
 
     marcarVistoP2P: (targetUserId) => {

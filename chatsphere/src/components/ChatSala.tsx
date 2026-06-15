@@ -109,11 +109,11 @@ export default function ChatSala({
     };
   }, []);
 
-  const handleUserClick = (user: RoomUser) => {
+  const handleUserClick = async (user: RoomUser) => {
     if (user.userId === currentUser?.id) return;
     
     // Iniciar conversación P2P y navegar
-    startP2PChat(user.userId, user.displayName);
+    await startP2PChat(user.userId, user.displayName);
     setShowUsersDrawer(false);
     navigateTo('chat-privado', 'push');
   };
