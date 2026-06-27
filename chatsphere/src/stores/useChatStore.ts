@@ -392,11 +392,11 @@ export const useChatStore = create<ChatState>((set, get) => {
         if (data.mensaje || data.tipo === 'sistema' || data.tipo === 'error') {
           const msgObj: Message = {
             id: String(Math.random()),
-            senderId: data.tipo === 'sistema' || data.tipo === 'error' ? 'system' : (data.usuarioId || 'anon'),
+            senderId: data.tipo === 'sistema' || data.tipo === 'error' ? 'system' : (data.userId || 'anon'),
             senderName: data.usuario || 'Sistema',
             text: data.mensaje || '',
             timestamp: new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            isSentByMe: data.usuarioId === get().currentUser?.id
+            isSentByMe: data.userId === get().currentUser?.id
           };
           set((state) => {
             // Actualizar lastOffset para la sala actual si el mensaje trae offset
