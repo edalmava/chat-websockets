@@ -256,40 +256,39 @@ export default function ChatSala({
 
             if (msg.isSentByMe) {
               return (
-                <div key={msg.id || index} className="flex items-end justify-end gap-2 max-w-[85%] ml-auto mt-1">
-                  <div className="flex flex-col items-end gap-1">
+                <div key={msg.id || index} className="flex flex-col gap-1 max-w-[85%] self-end items-end mt-1">
+                  <div className="flex items-end gap-2 flex-row-reverse">
                     <div className="bg-indigo-600 shadow-md shadow-indigo-600/10 px-4 py-2.5 rounded-2xl rounded-tr-xs text-white select-text">
                       <p className="text-sm font-sans whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                     </div>
-                    <div className="flex items-center gap-1 select-none">
-                      <span className="text-[9px] text-gray-500">{msg.timestamp}</span>
-                    </div>
+                    <span className="text-[9px] text-gray-500 select-none pb-1">{msg.timestamp}</span>
                   </div>
                 </div>
               );
             } else {
               const avatarBg = getAvatarColor(msg.senderName);
               return (
-                <div key={msg.id || index} className="flex items-end gap-2.5 max-w-[85%] mt-1">
+                <div key={msg.id || index} className="flex gap-2.5 max-w-[85%] self-start mt-1">
                   {/* Avatar */}
-                  <div className="relative shrink-0 select-none pb-5">
+                  <div className="relative shrink-0 select-none">
                     <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-xs ${avatarBg}`}>
                       {msg.senderName.substring(0, 2).toUpperCase()}
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-1 overflow-hidden">
+                  <div className="flex flex-col gap-1 min-w-0">
                     {/* Username */}
                     <span className="text-[11px] font-bold text-indigo-400 tracking-wide ml-0.5 font-sans select-none">
                       {msg.senderName}
                     </span>
 
-                    {/* Chat Bubble */}
-                    <div className="glass px-4 py-2.5 rounded-2xl rounded-tl-xs text-gray-100 select-text">
-                      <p className="text-sm font-sans leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                    {/* Chat Bubble + timestamp inline */}
+                    <div className="flex items-end gap-2">
+                      <div className="glass px-4 py-2.5 rounded-2xl rounded-tl-xs text-gray-100 select-text">
+                        <p className="text-sm font-sans leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                      </div>
+                      <span className="text-[9px] text-gray-500 select-none pb-1">{msg.timestamp}</span>
                     </div>
-
-                    <span className="text-[9px] text-gray-500 ml-1.5 mt-0.5 select-none">{msg.timestamp}</span>
                   </div>
                 </div>
               );
