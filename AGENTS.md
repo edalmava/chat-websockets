@@ -1,62 +1,97 @@
-# AGENTS.md — WebSocket Chat
+# AGENTS.md
 
 ## Quick start
-```powershell
-cd server
-npm install
-# .env must have TURN_SECRET, TURN_URL_UDP, TURN_URL_TCP, STUN_URL, TURN_REALM
-npm start
-# Server listens on :8443, serves only WebSocket upgrade — no static files
-```
 
-Frontend: serve `public/` separately (e.g. Live Server on :5500) from an origin listed in `server/config/constants.js` (`ALLOWED_ORIGINS`).
+```powershell
+# Server (WS-only, no static files)
+cd server
+# .env needs TURN_SECRET, TURN_URL_UDP, TURN_URL_TCP, STUN_URL, TURN_REALM
+npm start   # :8443
+
+# Chatsphere frontend (React)
+cd chatsphere
+npm install
+npm run dev  # :3000
+
+# OR old vanilla frontend (public/)
+# Serve with Live Server on :5500 — origin must be in ALLOWED_ORIGINS
+```
 
 ## Architecture
 
-| Path | Role |
+```
+websockets/
+├── server/          # Node.js/CommonJS backend — WS server, auth, moderation
+├── chatsphere/      # React 19 + Vite + TailwindCSS 4 + Zustand frontend
+├── public/          # Legacy vanilla JS frontend (no longer active)
+├── logs/            # Server logs (auto-rotated JSON)
+└── certs/           # Dev SSL certs (generate-certs.js)
+```
+
+## chatsphere (the active frontend)
+
+| File | Role |
 |------|------|
-| `server/index.js` | Entrypoint. Sets up HTTP server, attaches WS, auth middleware, heartbeat (30s). |
-| `server/handlers/socketHandler.js` | WebSocket event orchestrator: rooms, chat, typing, WebRTC signaling, moderation, IP rate limiting, session dedup. |
-| `server/config/constants.js` | All magic numbers: allowed origins, room names, validation limits, role definitions, ICE cap, IP rate limits. |
-| `server/middleware/authMiddleware.js` | Verifies JWT via Supabase JWKS (`ES256` only — no HS256). Token received as first WS message, **not** query string. |
-| `server/utils/security.js` | CORS check (`isOriginAllowed`), HTML sanitization, recursive `sanitizeObject`. |
-| `server/utils/validation.js` | Input validation, rate limiting (5 msg/s), role/mute duration validation. |
-| `server/utils/turnCredentials.js` | TURN credentials with HMAC-SHA1 time-limited tokens. |
-| `server/Logger.js` | Buffered JSON logger → `logs/` (dev) or `/var/log/websockets` (prod). 10 MB auto-rotation, 30-day retention, periodic security summaries. |
-| `public/` | Vanilla HTML/CSS/JS frontend. Supabase SDK loaded from CDN. |
-| `public/js/wsManager.js` | WebSocket connection manager with exponential backoff reconnection. |
-| `public/js/chat.js` | Central client orchestrator: connects wsManager + uiManager + webrtcManager. |
-| `public/js/uiManager.js` | DOM manipulation, toast notifications, auth forms, admin panel. No `window.*` exports. |
-| `public/js/webrtcManager.js` | WebRTC peer connection management, ICE candidate limiting (max 50). |
-| `public/js/supabaseClient.js` | Supabase auth wrapper (login, register, logout, session). |
-| `public/js/config.js` | Client-side config (Supabase anon key, API URL). |
+| `src/stores/useChatStore.ts` | Zustand store — all state & actions (auth, WS, P2P, navigation, notifications) |
+| `src/App.tsx` | Screen router via `AnimatePresence` + `currentScreen` state |
+| `src/components/Auth.tsx` | Login/Register via Supabase |
+| `src/components/MensajesPrivados.tsx` | P2P thread list + room users as "stories" |
+| `src/components/ChatPrivado.tsx` | P2P chat view with WebRTC status |
+| `src/components/ChatSala.tsx` | Public room chat |
+| `src/components/ListaSalas.tsx` | Room list |
+| `src/utils/wsManager.ts` | WebSocket connection (exponential backoff) |
+| `src/utils/webrtcManager.ts` | WebRTC P2P with ICE/connection limits |
+| `src/utils/supabaseClient.ts` | Supabase auth wrapper |
+| `src/types.ts` | `Screen`, `Message`, `ChatThread`, `Room`, `RoomUser` |
 
-## Key conventions
-- **Spanish codebase**: identifiers, comments, error messages, README all in Spanish.
-- **CommonJS** (`type: "commonjs"` in package.json), no ESM.
-- **No tests**, no linter, no formatter, no CI — `npm test` is a stub.
-- **No static file server** — the HTTP server only handles WS upgrade.
-- **Rooms**: fixed set of 10 rooms defined in `SALAS_POR_DEFECTO` (constants.js). `esSalaValida()` gates join requests. Max 50 users per room.
-- **Roles**: `user` → `moderator` → `admin` hierarchy enforced in `verificarPermiso()`. Self-demotion blocked server-side.
-- **Auth**: JWT from Supabase Auth, verified against Supabase JWKS endpoint via **ES256 only**. Token sent as **first WS message**, not in URL.
-- **Client ID**: random 9-char base-36 string generated per connection (`.id`), separate from Supabase `userId` (UUID).
-- **IP Rate Limiting** (in-memory): max 45 concurrent connections and 15 attempts/s per IP (configurable via `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS` env vars).
-- **ICE Candidate Limit**: max 50 candidates per P2P connection (dropped before `remoteDescription` to avoid DoS).
-- **P2P Connection Limit**: max 10 simultaneous P2P connections per client. P2P messages capped at 5000 chars.
+### Key quirks
+- **`StrictMode` disabled** in `main.tsx` — React double-mounts in dev, causing duplicate WS connections → server closes first connection → reconnect loop
+- **`@/` path alias** points to project root (`.`), not `src/` — but the codebase never uses it (all imports are relative)
+- **Lint**: `npm run lint` = `tsc --noEmit` only. No ESLint, no formatter, no CI
+- **Dev server**: `vite --port=3000 --host=0.0.0.0`, HMR disabled via `DISABLE_HMR` env var (AI Studio)
+- **Icons**: Material Symbols Outlined (loaded from Google Fonts CDN), not a React package
+- **Avatars**: Never external image URLs — always colored `<div>` with initials via `getAvatarColor(name)` (deterministic color from name hash)
+- **Toast z-index**: `z-[100]` needed (z-50 renders behind headers)
+- **Navigation pattern**: async state change → `await` → `navigateTo`, never in reverse. Use `useEffect` fallback guard for invalid states (e.g. `activeP2PUserId` null but on chat-privado screen)
+- **P2P disconnect**: `terminarP2PChat` action in store closes WebRTC, removes thread, navigates back — paired with `link_off` icon button in `ChatPrivado` header
 
-## Common tasks
-- Add an allowed origin → edit `ALLOWED_ORIGINS` in `server/config/constants.js`
-- Add a room → edit `SALAS_POR_DEFECTO` in `server/config/constants.js`
-- Generate dev SSL certs → `node generate-certs.js` (writes to `public/certs/`)
-- Tweak rate limits → edit `VALIDACION` in `server/config/constants.js` or `IP_RATE_LIMIT` section (or set `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS` env vars)
-- Tweak ICE limit → edit `MAX_ICE_CANDIDATES` in `constants.js` (currently 50)
+## Server
 
-## Security notes
-- `.env` is gitignored (not committed). Keep it that way. Contains real `TURN_SECRET`. Move to env vars or secret store for any non-local deployment.
-- `SUPABASE_JWT_SECRET` env var was removed — auth uses asymmetric JWKS only.
-- All user input is sanitized both client-side and server-side via `sanitizeHtml` / `sanitizeObject`.
-- WebRTC signaling is relay-only (no media through server).
-- No inline event handlers in HTML — all listeners attached via JS in uiManager.js.
-- No `alert()` calls in client code — all notifications via toast UI.
-- No `prompt()` calls — replaced by a custom modal input (`mostrarModalInput` in `uiManager.js`).
-- P2P DataChannel messages are validated client-side (payload capped at 5000 chars).
+| File | Role |
+|------|------|
+| `index.js` | HTTP server + WS upgrade, graceful shutdown |
+| `handlers/socketHandler.js` | WS events: rooms, chat, typing, WebRTC signaling, moderation, IP rate limit |
+| `config/constants.js` | Allowed origins, rooms, limits, roles |
+| `middleware/authMiddleware.js` | JWT via Supabase JWKS (ES256 only — no HS256) |
+| `utils/security.js` | `isOriginAllowed`, `sanitizeHtml`, `sanitizeObject` |
+| `utils/validation.js` | Rate limiting (5 msg/s), role/mute validation |
+| `utils/turnCredentials.js` | HMAC-SHA1 TURN tokens |
+| `Logger.js` | Buffered JSON logger, 10 MB rotation, 30-day retention |
+
+### Auth flow
+1. WS connects **without token in URL**
+2. First message: `{ tipo: "auth", token: "<JWT>" }`
+3. Server verifies via Supabase JWKS endpoint (ES256 only)
+4. Responds with `auth-info` + `salas-disponibles`
+5. Heartbeat every 30s — tokens expire after 2min inactivity
+
+### Limits (server-side)
+- Rooms: 10 fixed (`SALAS_POR_DEFECTO`), max 50 users/room
+- Roles: `user` → `moderator` → `admin` (self-demotion blocked)
+- IP rate limit: max 45 connections, 15 attempts/s per IP (configurable via env)
+- P2P: max 50 ICE candidates, 10 simultaneous connections, 5000 chars per message
+
+### Common edits
+- Add origin → `ALLOWED_ORIGINS` in `constants.js`
+- Add room → `SALAS_POR_DEFECTO` in `constants.js`
+- Dev SSL certs → `node generate-certs.js`
+- `.env` gitignored — contains `TURN_SECRET`
+
+## Conventions
+- Spanish identifiers, comments, error messages throughout
+- Server: CommonJS (`type: "commonjs"`). chatsphere: ESM (`type: "module"`)
+- No tests (`npm test` is a stub in both projects)
+- No `alert()` / `prompt()` — toasts + custom modal (`mostrarModalInput`)
+- All user input sanitized both client + server via `sanitizeHtml` / `sanitizeObject`
+- Inline event handlers banned — all listeners via JS (`uiManager.js` or React)
+- WebRTC signaling relay-only (no media through server)

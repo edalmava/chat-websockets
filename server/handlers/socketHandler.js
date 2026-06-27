@@ -6,11 +6,16 @@ const Websocket = require('ws');
 const { isOriginAllowed, sanitizeHtml, sanitizeObject } = require('../utils/security');
 const { validarMensaje, verificarRateLimit, validarRol, validarDuracionMute } = require('../utils/validation');
 const { verificarAutenticacionPorMensaje, verificarPermiso, verificarToken } = require('../middleware/authMiddleware');
+const redisClient = require('../utils/redisClient');
+const { STREAM_MAX_AGE_MS, CATCHUP_LIMIT } = require('../config/constants');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
 const { esSalaValida, SALAS_POR_DEFECTO, ROLES, MAX_USERS_PER_ROOM, IP_RATE_LIMIT } = require('../config/constants');
 
 module.exports = function(wss, logger) {
+
+    // Conectar Redis para persistencia de mensajes
+    redisClient.conectarRedis(logger);
 
     // ÍNDICE DE SALAS PARA ESCALABILIDAD
     // Map<NombreSala, Set<Websocket>>
@@ -151,6 +156,23 @@ module.exports = function(wss, logger) {
             }
         } catch (error) {
             logger.log('ERROR', 'ice_config_send_failed', client.id, { errorMsg: error.message });
+        }
+    }
+
+    /**
+     * Responde con un acknowledgement (ack) al cliente si envió un requestId.
+     */
+    function responderAck(ws, requestId, status, payload = null, mensaje = null) {
+        if (!requestId) return;
+        const ack = { responseTo: requestId, tipo: 'ack', status };
+        if (payload) ack.payload = payload;
+        if (mensaje) ack.mensaje = mensaje;
+        try {
+            if (ws.readyState === Websocket.OPEN) {
+                ws.send(JSON.stringify(ack));
+            }
+        } catch (error) {
+            logger.log('ERROR', 'ack_send_failed', ws.id, { errorMsg: error.message });
         }
     }
 
@@ -299,8 +321,8 @@ module.exports = function(wss, logger) {
                     return;
                 }
 
-                // Rate limiting preventivo global (excluye webrtc-signal para evitar falsos positivos por ráfagas de ICE candidates)
-                if (messageData.tipo !== 'webrtc-signal') {
+                // Rate limiting preventivo global (excluye webrtc-signal y flush offline)
+                if (messageData.tipo !== 'webrtc-signal' && !messageData._offlineQueue) {
                     const rateLimitCheck = verificarRateLimit(ws);
                     if (!rateLimitCheck.permitido) {
                         logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario, tipo: messageData.tipo });
@@ -313,12 +335,14 @@ module.exports = function(wss, logger) {
                     case 'join':
                         const antiguaSala = ws.sala;
                         const nuevaSala = messageData.sala;
+                        const requestId = messageData.requestId;
 
                         if (!esSalaValida(nuevaSala)) {
                             logger.log('WARNING', 'invalid_room', clientId, {
                                 username: ws.nombreUsuario,
                                 sala_recibida: nuevaSala
                             });
+                            responderAck(ws, requestId, 'error', null, `Sala inválida. Las salas disponibles son: ${SALAS_POR_DEFECTO.join(', ')}`);
                             enviarError(ws, `Sala inválida. Las salas disponibles son: ${SALAS_POR_DEFECTO.join(', ')}`);
                             return;
                         }
@@ -327,6 +351,7 @@ module.exports = function(wss, logger) {
                         if (antiguaSala !== nuevaSala) {
                             const salaDestino = salas.get(nuevaSala);
                             if (salaDestino && salaDestino.size >= MAX_USERS_PER_ROOM) {
+                                responderAck(ws, requestId, 'error', null, 'La sala está llena. Intenta en otra sala.');
                                 enviarError(ws, 'La sala está llena. Intenta en otra sala.');
                                 return;
                             }
@@ -348,6 +373,7 @@ module.exports = function(wss, logger) {
                         agregarASala(ws, nuevaSala);
 
                         // Confirmar éxito al cliente
+                        responderAck(ws, requestId, 'ok', { sala: nuevaSala });
                         ws.send(JSON.stringify({ 
                             tipo: 'join-success',
                             sala: nuevaSala 
@@ -372,11 +398,28 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'chat':
+                        const chatRequestId = messageData.requestId;
+                        const clientOffset = messageData.clientOffset;
+                        const esFlushOffline = messageData._offlineQueue === true;
+
+                        // Dedup: verificar si este clientOffset ya fue procesado (reintento por reconexión)
+                        if (clientOffset) {
+                            try {
+                                const yaProcesado = await redisClient.existeDedup(clientOffset);
+                                if (yaProcesado) {
+                                    logger.log('DEBUG', 'message_dedup_skipped', clientId, { clientOffset });
+                                    responderAck(ws, chatRequestId, 'ok', { timestamp: new Date().toISOString() });
+                                    return;
+                                }
+                            } catch (_) { /* Redis caído, continuar */ }
+                        }
+
                         // A-1: No permitir chat sin estar en una sala
                         if (!ws.sala) {
                             logger.log('WARNING', 'chat_outside_room', clientId, {
                                 username: ws.nombreUsuario
                             });
+                            responderAck(ws, chatRequestId, 'error', null, 'Debes unirte a una sala antes de enviar mensajes');
                             enviarError(ws, 'Debes unirte a una sala antes de enviar mensajes');
                             return;
                         }
@@ -386,10 +429,22 @@ module.exports = function(wss, logger) {
                             const muteInfo = usuariosSilenciados.get(ws.userId);
                             if (Date.now() < muteInfo.hasta) {
                                 const restantes = Math.ceil((muteInfo.hasta - Date.now()) / 1000);
+                                responderAck(ws, chatRequestId, 'error', null, `Estás silenciado. No puedes enviar mensajes por los siguientes ${restantes} segundos. Silenciado por: ${muteInfo.por}.`);
                                 enviarError(ws, `Estás silenciado. No puedes enviar mensajes por los siguientes ${restantes} segundos. Silenciado por: ${muteInfo.por}.`);
                                 return;
                             }
                             usuariosSilenciados.delete(ws.userId);
+                        }
+
+                        // Rate limiting: saltar si es flush de cola offline (ya fue rate-limited al encolar)
+                        if (!esFlushOffline) {
+                            const rateLimitCheck = verificarRateLimit(ws);
+                            if (!rateLimitCheck.permitido) {
+                                logger.log('WARNING', 'rate_limit_exceeded', clientId, { username: ws.nombreUsuario, tipo: messageData.tipo });
+                                enviarError(ws, rateLimitCheck.error);
+                                responderAck(ws, chatRequestId, 'error', null, rateLimitCheck.error);
+                                return;
+                            }
                         }
 
                         const messageStartTime = Date.now();
@@ -397,23 +452,99 @@ module.exports = function(wss, logger) {
                         const validMsg = validarMensaje(messageData.mensaje);
                         if (!validMsg.válido) {
                             logger.log('WARNING', 'message_validation_failed', clientId, { username: ws.nombreUsuario, razon: validMsg.error });
+                            responderAck(ws, chatRequestId, 'error', null, validMsg.error);
                             enviarError(ws, validMsg.error);
                             return;
                         }
 
+                        // 1. Persistir en Redis Stream
+                        let streamId = null;
+                        try {
+                            streamId = await redisClient.guardarMensaje(
+                                ws.sala,
+                                clientOffset || `${ws.userId}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                                ws.nombreUsuario,
+                                ws.userId,
+                                validMsg.mensaje,
+                                new Date().toISOString()
+                            );
+                            // Marcar clientOffset como procesado (TTL 7 días)
+                            if (clientOffset) {
+                                await redisClient.marcarDedup(clientOffset);
+                            }
+                        } catch (e) {
+                            logger.log('ERROR', 'redis_persist_failed', clientId, { error: e.message });
+                            // Continuar con broadcast aunque Redis falle (degradación graceful)
+                        }
+
+                        // 2. Broadcast (incluir offset si se pudo persistir)
                         broadcastMessage({
                             tipo: 'chat',
                             usuario: ws.nombreUsuario,
                             userId: ws.userId,
                             mensaje: validMsg.mensaje,
-                            timestamp: new Date().toISOString()
+                            timestamp: new Date().toISOString(),
+                            offset: streamId
                         }, ws.sala);
+
+                        responderAck(ws, chatRequestId, 'ok', { timestamp: new Date().toISOString(), offset: streamId });
                         
                         logger.log('DEBUG', 'message_broadcast', clientId, {
                             username: ws.nombreUsuario,
                             sala: ws.sala,
+                            streamId,
                             latency_ms: Date.now() - messageStartTime
                         });
+                        break;
+
+                    case 'catch-up':
+                        const salaCatchUp = messageData.sala;
+                        const lastOffset = messageData.lastOffset;
+                        const limit = messageData.limit || CATCHUP_LIMIT;
+
+                        if (!esSalaValida(salaCatchUp)) {
+                            logger.log('WARNING', 'catch_up_invalid_room', clientId, { sala: salaCatchUp });
+                            return;
+                        }
+
+                        try {
+                            let mensajes;
+                            if (lastOffset) {
+                                // Traer mensajes después del último offset conocido
+                                const desde = `(${lastOffset}`;
+                                mensajes = await redisClient.obtenerMensajes(salaCatchUp, desde, '+', limit);
+                                if (mensajes.length === 0) {
+                                    mensajes = await redisClient.obtenerUltimosMensajes(salaCatchUp, limit);
+                                }
+                            } else {
+                                // Sin offset: traer los últimos N mensajes
+                                mensajes = await redisClient.obtenerUltimosMensajes(salaCatchUp, limit);
+                            }
+
+                            if (mensajes.length > 0) {
+                                ws.send(JSON.stringify({
+                                    tipo: 'chat-history',
+                                    sala: salaCatchUp,
+                                    mensajes: mensajes.map(m => ({
+                                        offset: m.id,
+                                        clientOffset: m.clientOffset,
+                                        usuario: m.usuario,
+                                        userId: m.userId,
+                                        mensaje: m.mensaje,
+                                        timestamp: m.timestamp
+                                    })),
+                                    completado: mensajes.length < limit
+                                }));
+
+                                logger.log('DEBUG', 'catch_up_delivered', clientId, {
+                                    sala: salaCatchUp,
+                                    count: mensajes.length,
+                                    desdeOffset: lastOffset || 'inicio'
+                                });
+                            }
+                        } catch (e) {
+                            logger.log('ERROR', 'catch_up_failed', clientId, { error: e.message });
+                        }
                         break;
 
                     case 'typing':
@@ -514,7 +645,9 @@ module.exports = function(wss, logger) {
                         break;
 
                     case 'kick_user':
+                        const kickRequestId = messageData.requestId;
                         if (!verificarPermiso(ws, 'kick_user')) {
+                            responderAck(ws, kickRequestId, 'error', null, 'No tienes permisos para expulsar usuarios');
                             enviarError(ws, 'No tienes permisos para expulsar usuarios');
                             break;
                         }
@@ -547,14 +680,18 @@ module.exports = function(wss, logger) {
                                 }, targetKickWs.sala);
                             }
 
+                            responderAck(ws, kickRequestId, 'ok', { targetId: targetKickId });
                             targetKickWs.close(4003, 'Expulsado por moderador');
                         } else {
+                            responderAck(ws, kickRequestId, 'error', null, 'Usuario objetivo no encontrado en línea');
                             enviarError(ws, 'Usuario objetivo no encontrado en línea');
                         }
                         break;
 
                     case 'mute_user':
+                        const muteRequestId = messageData.requestId;
                         if (!verificarPermiso(ws, 'mute_user')) {
+                            responderAck(ws, muteRequestId, 'error', null, 'No tienes permisos para silenciar usuarios');
                             enviarError(ws, 'No tienes permisos para silenciar usuarios');
                             break;
                         }
@@ -564,6 +701,7 @@ module.exports = function(wss, logger) {
 
                         const muteVal = validarDuracionMute(duracionInput);
                         if (!muteVal.válido) {
+                            responderAck(ws, muteRequestId, 'error', null, muteVal.error);
                             enviarError(ws, muteVal.error);
                             break;
                         }
@@ -599,13 +737,18 @@ module.exports = function(wss, logger) {
                                     timestamp: new Date().toISOString()
                                 }, targetMuteWs.sala);
                             }
+
+                            responderAck(ws, muteRequestId, 'ok', { targetId: targetMuteId, duracion: muteVal.duracion });
                         } else {
+                            responderAck(ws, muteRequestId, 'error', null, 'Usuario objetivo no encontrado en línea');
                             enviarError(ws, 'Usuario objetivo no encontrado en línea');
                         }
                         break;
 
                     case 'cambiar_rol':
+                        const rolRequestId = messageData.requestId;
                         if (!verificarPermiso(ws, 'cambiar_rol')) {
+                            responderAck(ws, rolRequestId, 'error', null, 'No tienes permisos para cambiar roles');
                             enviarError(ws, 'No tienes permisos para cambiar roles');
                             break;
                         }
@@ -615,12 +758,14 @@ module.exports = function(wss, logger) {
 
                         const rolVal = validarRol(nuevoRol);
                         if (!rolVal.válido) {
+                            responderAck(ws, rolRequestId, 'error', null, rolVal.error);
                             enviarError(ws, rolVal.error);
                             break;
                         }
 
                         // #6: No permitir auto-degradación
                         if (targetRolId === ws.userId) {
+                            responderAck(ws, rolRequestId, 'error', null, 'No puedes cambiar tu propio rol. Solicita a otro administrador.');
                             enviarError(ws, 'No puedes cambiar tu propio rol. Solicita a otro administrador.');
                             break;
                         }
@@ -652,7 +797,10 @@ module.exports = function(wss, logger) {
                             if (targetRolWs.sala) {
                                 enviarListaUsuarios(targetRolWs.sala);
                             }
+
+                            responderAck(ws, rolRequestId, 'ok', { targetId: targetRolId, nuevoRol });
                         } else {
+                            responderAck(ws, rolRequestId, 'error', null, 'Usuario objetivo no encontrado en línea (los cambios persistentes en la BD se aplicarán en su próximo login)');
                             enviarError(ws, 'Usuario objetivo no encontrado en línea (los cambios persistentes en la BD se aplicarán en su próximo login)');
                         }
                         break;
@@ -668,10 +816,12 @@ module.exports = function(wss, logger) {
             }
         });
 
-        ws.on('close', () => {
+        ws.on('close', (code, reason) => {
             logger.log('INFO', 'user_disconnection', clientId, { 
                 userId: ws.userId,
                 username: ws.nombreUsuario, 
+                closeCode: code,
+                closeReason: reason ? reason.toString() : '',
                 totalConexiones: wss.clients.size - 1 
             });
             
@@ -764,6 +914,15 @@ module.exports = function(wss, logger) {
             }
         });
     }, 5 * 60 * 1000); // Revisión cada 5 minutos
+
+    // Trimming periódico de streams Redis (eliminar mensajes > maxAge)
+    setInterval(async () => {
+        try {
+            await redisClient.trimPorEdad(STREAM_MAX_AGE_MS);
+        } catch (e) {
+            logger.log('ERROR', 'stream_trim_error', 'system', { error: e.message });
+        }
+    }, 60 * 1000); // Cada minuto
 
     wss.on('close', () => {
         clearInterval(interval);

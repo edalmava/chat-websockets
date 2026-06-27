@@ -59,6 +59,11 @@ const MAX_USERS_PER_ROOM = 50; // #5: Límite de usuarios simultáneos por sala
 const MODERATOR_ACTIONS = ['kick_user', 'mute_user'];
 const ADMIN_ACTIONS = ['cambiar_rol'];
 
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const STREAM_MAXLEN = parseInt(process.env.STREAM_MAXLEN, 10) || 1000;
+const STREAM_MAX_AGE_MS = (parseInt(process.env.STREAM_MAX_AGE_HOURS, 10) || 24) * 60 * 60 * 1000;
+const CATCHUP_LIMIT = parseInt(process.env.CATCHUP_LIMIT, 10) || 50;
+
 module.exports = {
     PORT,
     ALLOWED_ORIGINS,
@@ -70,5 +75,9 @@ module.exports = {
     MAX_MUTE_DURATION,
     MAX_USERS_PER_ROOM,
     MODERATOR_ACTIONS,
-    ADMIN_ACTIONS
+    ADMIN_ACTIONS,
+    REDIS_URL,
+    STREAM_MAXLEN,
+    STREAM_MAX_AGE_MS,
+    CATCHUP_LIMIT
 };

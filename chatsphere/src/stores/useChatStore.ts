@@ -37,6 +37,9 @@ interface ChatState {
   isMuted: boolean;
   muteDurationRemaining: number;
   
+  // Offsets de mensajes para catch-up en reconexión
+  lastOffsets: Record<string, string>; // roomCode → último offset Redis conocido
+
   // Notificaciones Toast
   notifications: ChatNotification[];
 
@@ -81,6 +84,24 @@ const ROOM_TEMPLATES: Record<string, { icon: string; description: string }> = {
   'gaming-zone': { icon: 'sports_esports', description: 'El punto de encuentro definitivo para gamers. Encuentra equipo y comparte jugadas.' },
   'creative-corner': { icon: 'palette', description: 'Un espacio para artistas, diseñadores y escritores para mostrar su trabajo.' }
 };
+
+const LAST_OFFSETS_KEY_PREFIX = 'lastOffsets_';
+
+function cargarLastOffsets(userId: string): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(`${LAST_OFFSETS_KEY_PREFIX}${userId}`) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function guardarLastOffsets(userId: string, offsets: Record<string, string>) {
+  localStorage.setItem(`${LAST_OFFSETS_KEY_PREFIX}${userId}`, JSON.stringify(offsets));
+}
+
+function limpiarLastOffsets(userId: string) {
+  localStorage.removeItem(`${LAST_OFFSETS_KEY_PREFIX}${userId}`);
+}
 
 export const useChatStore = create<ChatState>((set, get) => {
   
@@ -199,18 +220,24 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     switch (data.tipo) {
       case 'auth-info':
-        set({
-          currentUser: {
-            id: data.userId,
-            displayName: data.displayName,
-            role: data.role
-          },
-          currentScreen: get().currentScreen === 'auth' ? 'mensajes-privados' : get().currentScreen
+        set((state) => {
+          const userId = data.userId;
+          const lastOffsets = userId ? cargarLastOffsets(userId) : {};
+          return {
+            currentUser: {
+              id: userId,
+              displayName: data.displayName,
+              role: data.role
+            },
+            currentScreen: state.currentScreen === 'auth' ? 'lista-salas' : state.currentScreen,
+            lastOffsets
+          };
         });
         break;
 
       case 'join-success':
         set((state) => {
+          const roomCode = data.sala.toLowerCase().replace(/\s+/g, '-');
           const antiguaSalaCode = state.currentRoomCode;
           const nuevasSalas = state.rooms.map(r => {
             if (r.id === antiguaSalaCode) {
@@ -219,12 +246,23 @@ export const useChatStore = create<ChatState>((set, get) => {
             return r;
           });
           return {
-            currentRoomCode: data.sala.toLowerCase().replace(' ', '-'),
+            currentRoomCode: roomCode,
             rooms: nuevasSalas,
             roomMessages: [],
             typingUsers: []
           };
         });
+        // Solicitar catch-up de mensajes perdidos al unirse a la sala
+        {
+          const roomCode = data.sala.toLowerCase().replace(/\s+/g, '-');
+          const lastOffset = get().lastOffsets[roomCode];
+          wsManager.enviarMensaje({
+            tipo: 'catch-up',
+            sala: data.sala,
+            lastOffset: lastOffset || undefined,
+            limit: lastOffset ? undefined : undefined
+          });
+        }
         break;
 
       case 'token_refresh_ok':
@@ -322,6 +360,33 @@ export const useChatStore = create<ChatState>((set, get) => {
         get().addNotification('info', `Tu rol ha sido actualizado a: ${data.payload.nuevoRol}`);
         break;
 
+      case 'chat-history':
+        {
+          const historyMsgs: Message[] = (data.mensajes || []).map((m: any) => ({
+            id: `hist-${m.offset}`,
+            senderId: m.userId || 'system',
+            senderName: m.usuario || 'Sistema',
+            text: m.mensaje || '',
+            timestamp: new Date(m.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSentByMe: m.userId === get().currentUser?.id
+          }));
+          set((state) => {
+            const nuevosOffsets = { ...state.lastOffsets };
+            if (data.mensajes && data.mensajes.length > 0) {
+              const ultimo = data.mensajes[data.mensajes.length - 1];
+              nuevosOffsets[get().currentRoomCode] = ultimo.offset;
+            }
+            if (get().currentUser) {
+              guardarLastOffsets(get().currentUser!.id, nuevosOffsets);
+            }
+            return {
+              roomMessages: [...state.roomMessages, ...historyMsgs],
+              lastOffsets: nuevosOffsets
+            };
+          });
+        }
+        break;
+
       default:
         // Mensaje ordinario de chat, sistema o error
         if (data.mensaje || data.tipo === 'sistema' || data.tipo === 'error') {
@@ -333,9 +398,19 @@ export const useChatStore = create<ChatState>((set, get) => {
             timestamp: new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             isSentByMe: data.usuarioId === get().currentUser?.id
           };
-          set((state) => ({
-            roomMessages: [...state.roomMessages, msgObj]
-          }));
+          set((state) => {
+            // Actualizar lastOffset para la sala actual si el mensaje trae offset
+            const nuevosOffsets = data.offset
+              ? { ...state.lastOffsets, [state.currentRoomCode]: data.offset }
+              : state.lastOffsets;
+            if (data.offset && get().currentUser) {
+              guardarLastOffsets(get().currentUser!.id, nuevosOffsets);
+            }
+            return {
+              roomMessages: [...state.roomMessages, msgObj],
+              lastOffsets: nuevosOffsets
+            };
+          });
         }
         break;
     }
@@ -350,7 +425,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     currentUser: null,
     wsStatus: 'disconnected',
     rooms: [],
-    currentRoomCode: 'general',
+    currentRoomCode: '',
     roomMessages: [],
     roomUsers: [],
     typingUsers: [],
@@ -363,6 +438,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     
     isMuted: false,
     muteDurationRemaining: 0,
+    
+    lastOffsets: {},
     
     notifications: [],
 
@@ -420,11 +497,12 @@ export const useChatStore = create<ChatState>((set, get) => {
       wsManager.conectar(token, {
         onOpen: () => {
           set({ wsStatus: 'connected', wsInitializing: false });
-          // Unirse a la sala actual
-          const sala = get().currentRoomCode === 'general' ? 'General' : 
-                       get().currentRoomCode === 'tech-hub' ? 'Tech Hub' :
-                       get().currentRoomCode === 'gaming-zone' ? 'Gaming Zone' : 'Creative Corner';
-          get().joinRoom(sala);
+          if (get().currentUser) {
+            const sala = get().currentRoomCode === 'general' ? 'General' :
+                         get().currentRoomCode === 'tech-hub' ? 'Tech Hub' :
+                         get().currentRoomCode === 'gaming-zone' ? 'Gaming Zone' : 'Creative Corner';
+            get().joinRoom(sala);
+          }
         },
         onClose: (event) => {
           webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks());
@@ -488,7 +566,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     logout: async () => {
-      if (!get().session && !get().currentUser) return;
+      const currentUserId = get().currentUser?.id;
+      if (!get().session && !currentUserId) return;
 
       set({
         session: null,
@@ -501,7 +580,8 @@ export const useChatStore = create<ChatState>((set, get) => {
         p2pMessages: {},
         activeP2PUserId: null,
         isMuted: false,
-        muteDurationRemaining: 0
+        muteDurationRemaining: 0,
+        lastOffsets: {}
       });
 
       wsManager.cerrarConexion();
@@ -530,9 +610,15 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     sendRoomMessage: (text) => {
       if (get().isMuted) return;
-      wsManager.enviarMensaje({
+      const userId = get().currentUser?.id;
+      if (!userId) return;
+      const clientOffset = wsManager.generarClientOffset(userId);
+      wsManager.enviarConAck({
         tipo: 'chat',
-        mensaje: text
+        mensaje: text,
+        clientOffset
+      }, 10000).catch((err) => {
+        console.warn('[Chat] Mensaje no confirmado por el servidor, encolado para reintento:', err);
       });
     },
 

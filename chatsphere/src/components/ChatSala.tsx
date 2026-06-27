@@ -56,7 +56,7 @@ export default function ChatSala({
 
   // Encontrar datos de la sala actual
   const currentRoom = rooms.find(r => r.code === currentRoomCode) || {
-    name: currentRoomCode.charAt(0).toUpperCase() + currentRoomCode.slice(1).replace('-', ' '),
+    name: currentRoomCode ? currentRoomCode.charAt(0).toUpperCase() + currentRoomCode.slice(1).replace('-', ' ') : 'Selecciona una sala',
     onlineCount: roomUsers.length
   };
 

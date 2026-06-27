@@ -23,6 +23,7 @@ export interface Message {
   status?: 'sending' | 'sent' | 'read';
   docName?: string;
   docSize?: string;
+  clientOffset?: string;
 }
 
 export interface ChatThread {
