@@ -78,12 +78,20 @@ interface ChatState {
   removeNotification: (id: string) => void;
 }
 
-const ROOM_TEMPLATES: Record<string, { icon: string; description: string }> = {
-  'general': { icon: 'public', description: 'Conéctate con todos en la comunidad global. Pensamientos compartidos, actualizaciones y más.' },
-  'tech-hub': { icon: 'terminal', description: 'Lo último en programación, hardware y tecnologías emergentes. Discute, aprende y crece.' },
-  'gaming-zone': { icon: 'sports_esports', description: 'El punto de encuentro definitivo para gamers. Encuentra equipo y comparte jugadas.' },
-  'creative-corner': { icon: 'palette', description: 'Un espacio para artistas, diseñadores y escritores para mostrar su trabajo.' }
-};
+function generarRoomMeta(salaNombre: string): { icon: string; description: string } {
+  const n = salaNombre.toLowerCase();
+  if (n.includes('general')) return { icon: 'public', description: 'Conéctate con todos en la comunidad global. Pensamientos compartidos, actualizaciones y más.' };
+  if (n.includes('desarrollo')) return { icon: 'code', description: 'Discute sobre programación, frameworks y mejores prácticas de desarrollo.' };
+  if (n.includes('soporte')) return { icon: 'support', description: 'Obtén ayuda técnica y resuelve dudas con la comunidad.' };
+  if (n.includes('random')) return { icon: 'casino', description: 'Charlas sin rumbo fijo. Todo vale, mantén el respeto.' };
+  if (n.includes('gaming')) return { icon: 'sports_esports', description: 'El punto de encuentro definitivo para gamers.' };
+  if (n.includes('música') || n.includes('musica')) return { icon: 'music_note', description: 'Comparte y descubre música de todos los géneros.' };
+  if (n.includes('cine')) return { icon: 'movie', description: 'Discute películas, series y todo sobre el séptimo arte.' };
+  if (n.includes('deporte')) return { icon: 'sports', description: 'Sigue y debate sobre tus deportes y equipos favoritos.' };
+  if (n.includes('tecnología') || n.includes('tecnologia')) return { icon: 'devices', description: 'Lo último en gadgets, innovación y tendencias tecnológicas.' };
+  if (n.includes('off') || n.includes('topic')) return { icon: 'forum', description: 'Temas diversos que no encajan en otras categorías.' };
+  return { icon: 'forum', description: 'Sala de chat de la comunidad.' };
+}
 
 const LAST_OFFSETS_KEY_PREFIX = 'lastOffsets_';
 
@@ -260,7 +268,6 @@ export const useChatStore = create<ChatState>((set, get) => {
             tipo: 'catch-up',
             sala: data.sala,
             lastOffset: lastOffset || undefined,
-            limit: lastOffset ? undefined : undefined
           });
         }
         break;
@@ -283,15 +290,15 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       case 'salas-disponibles':
         const roomsMapeadas: Room[] = data.salas.map((salaNombre: string) => {
-          const code = salaNombre.toLowerCase().replace(' ', '-');
-          const template = ROOM_TEMPLATES[code] || { icon: 'forum', description: 'Sala de chat de la comunidad.' };
+          const code = salaNombre.toLowerCase().replace(/\s+/g, '-');
+          const meta = generarRoomMeta(salaNombre);
           return {
             id: code,
             name: salaNombre,
-            icon: template.icon,
-            description: template.description,
+            icon: meta.icon,
+            description: meta.description,
             onlineCount: 0,
-            code: code as any
+            code
           };
         });
         set({ rooms: roomsMapeadas });
@@ -299,14 +306,12 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       case 'lista-usuarios':
         const list: RoomUser[] = data.usuarios;
-        set({ roomUsers: list });
-        
-        // Actualizar estadísticas de onlineCount de la sala actual
+        const salaCode = data.sala?.toLowerCase().replace(/\s+/g, '-');
         set((state) => ({
-          rooms: state.rooms.map(r => {
-            const esSalaActual = r.id === state.currentRoomCode;
-            return esSalaActual ? { ...r, onlineCount: list.length } : r;
-          })
+          roomUsers: list,
+          rooms: state.rooms.map(r =>
+            r.id === salaCode ? { ...r, onlineCount: list.length } : r
+          )
         }));
         break;
 
@@ -388,18 +393,22 @@ export const useChatStore = create<ChatState>((set, get) => {
         break;
 
       default:
-        // Mensaje ordinario de chat, sistema o error
-        if (data.mensaje || data.tipo === 'sistema' || data.tipo === 'error') {
+        // Errores del servidor como toast, no como mensaje de chat
+        if (data.tipo === 'error') {
+          get().addNotification('error', data.mensaje || 'Error del servidor');
+          break;
+        }
+        // Mensaje ordinario de chat o sistema
+        if (data.mensaje || data.tipo === 'sistema') {
           const msgObj: Message = {
-            id: String(Math.random()),
-            senderId: data.tipo === 'sistema' || data.tipo === 'error' ? 'system' : (data.userId || 'anon'),
+            id: data.id || String(Math.random()),
+            senderId: data.tipo === 'sistema' ? 'system' : (data.userId || 'anon'),
             senderName: data.usuario || 'Sistema',
             text: data.mensaje || '',
             timestamp: new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             isSentByMe: data.userId === get().currentUser?.id
           };
           set((state) => {
-            // Actualizar lastOffset para la sala actual si el mensaje trae offset
             const nuevosOffsets = data.offset
               ? { ...state.lastOffsets, [state.currentRoomCode]: data.offset }
               : state.lastOffsets;
@@ -604,7 +613,8 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       wsManager.enviarMensaje({
         tipo: 'join',
-        sala: roomName
+        sala: roomName,
+        requestId: crypto.randomUUID(),
       });
     },
 

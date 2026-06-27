@@ -11,6 +11,7 @@ const { STREAM_MAX_AGE_MS, CATCHUP_LIMIT } = require('../config/constants');
 
 const { obtenerConfigICE } = require('../utils/turnCredentials');
 const { esSalaValida, SALAS_POR_DEFECTO, ROLES, MAX_USERS_PER_ROOM, IP_RATE_LIMIT } = require('../config/constants');
+const crypto = require('crypto');
 
 module.exports = function(wss, logger) {
 
@@ -33,6 +34,13 @@ module.exports = function(wss, logger) {
     const { MAX_CONEXIONES_POR_IP, MAX_INTENTOS_POR_SEGUNDO } = IP_RATE_LIMIT;
     const conexionesPorIP = new Map(); // Map<IP, Set<WebSocket>>
     const intentosConexionPorIP = new Map(); // Map<IP, number[]>
+
+    /**
+     * Genera un ID único para mensajes de sistema
+     */
+    function generarIdSistema() {
+        return `sistema-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
+    }
 
     /**
      * Añade un cliente a una sala en el índice
@@ -75,6 +83,7 @@ module.exports = function(wss, logger) {
         
         broadcastMessage({ 
             tipo: 'lista-usuarios', 
+            sala,
             usuarios: usuariosEnSala,
             timestamp: new Date().toISOString()
         }, sala);
@@ -178,7 +187,7 @@ module.exports = function(wss, logger) {
 
     // MANEJAR NUEVAS CONEXIONES
     wss.on('connection', async (ws, req) => {
-        const clientId = Math.random().toString(36).substr(2, 9);
+        const clientId = crypto.randomUUID();
         const origin = req.headers.origin || 'sin-origen';
         const userAgent = req.headers['user-agent'] || 'desconocido';
         
@@ -361,6 +370,7 @@ module.exports = function(wss, logger) {
                         if (antiguaSala && antiguaSala !== nuevaSala) {
                             quitarDeSala(ws, antiguaSala);
                             broadcastMessage({
+                                id: generarIdSistema(),
                                 usuario: 'Servidor',
                                 mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
                                 tipo: 'sistema',
@@ -384,6 +394,7 @@ module.exports = function(wss, logger) {
 
                         // Notificar a la nueva sala
                         broadcastMessage({ 
+                            id: generarIdSistema(),
                             usuario: 'Servidor', 
                             mensaje: `El usuario ${ws.nombreUsuario} se ha unido a la sala: ${nuevaSala}`,
                             tipo: 'sistema',
@@ -504,6 +515,7 @@ module.exports = function(wss, logger) {
 
                         if (!esSalaValida(salaCatchUp)) {
                             logger.log('WARNING', 'catch_up_invalid_room', clientId, { sala: salaCatchUp });
+                            ws.send(JSON.stringify({ tipo: 'chat-history', sala: salaCatchUp, mensajes: [], completado: true }));
                             return;
                         }
 
@@ -521,27 +533,25 @@ module.exports = function(wss, logger) {
                                 mensajes = await redisClient.obtenerUltimosMensajes(salaCatchUp, limit);
                             }
 
-                            if (mensajes.length > 0) {
-                                ws.send(JSON.stringify({
-                                    tipo: 'chat-history',
-                                    sala: salaCatchUp,
-                                    mensajes: mensajes.map(m => ({
-                                        offset: m.id,
-                                        clientOffset: m.clientOffset,
-                                        usuario: m.usuario,
-                                        userId: m.userId,
-                                        mensaje: m.mensaje,
-                                        timestamp: m.timestamp
-                                    })),
-                                    completado: mensajes.length < limit
-                                }));
+                            ws.send(JSON.stringify({
+                                tipo: 'chat-history',
+                                sala: salaCatchUp,
+                                mensajes: mensajes.map(m => ({
+                                    offset: m.id,
+                                    clientOffset: m.clientOffset,
+                                    usuario: m.usuario,
+                                    userId: m.userId,
+                                    mensaje: m.mensaje,
+                                    timestamp: m.timestamp
+                                })),
+                                completado: mensajes.length < limit
+                            }));
 
-                                logger.log('DEBUG', 'catch_up_delivered', clientId, {
-                                    sala: salaCatchUp,
-                                    count: mensajes.length,
-                                    desdeOffset: lastOffset || 'inicio'
-                                });
-                            }
+                            logger.log('DEBUG', 'catch_up_delivered', clientId, {
+                                sala: salaCatchUp,
+                                count: mensajes.length,
+                                desdeOffset: lastOffset || 'inicio'
+                            });
                         } catch (e) {
                             logger.log('ERROR', 'catch_up_failed', clientId, { error: e.message });
                         }
@@ -673,6 +683,7 @@ module.exports = function(wss, logger) {
 
                             if (targetKickWs.sala) {
                                 broadcastMessage({
+                                    id: generarIdSistema(),
                                     usuario: 'Servidor',
                                     mensaje: `El usuario "${targetKickWs.nombreUsuario}" ha sido expulsado de la sala por el moderador "${ws.nombreUsuario}" (${motivoKick})`,
                                     tipo: 'sistema',
@@ -731,6 +742,7 @@ module.exports = function(wss, logger) {
 
                             if (targetMuteWs.sala) {
                                 broadcastMessage({
+                                    id: generarIdSistema(),
                                     usuario: 'Servidor',
                                     mensaje: `El usuario "${targetMuteWs.nombreUsuario}" ha sido silenciado por ${muteVal.duracion} segundos por "${ws.nombreUsuario}"`,
                                     tipo: 'sistema',
@@ -833,6 +845,7 @@ module.exports = function(wss, logger) {
             if (ws.sala) {
                 quitarDeSala(ws, ws.sala);
                 broadcastMessage({ 
+                    id: generarIdSistema(),
                     usuario: 'Servidor', 
                     mensaje: `El usuario "${ws.nombreUsuario}" ha dejado la sala`,
                     tipo: 'sistema',

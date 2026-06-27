@@ -195,10 +195,6 @@ export default function App() {
           {currentScreen === 'lista-salas' && (
             <ListaSalas
               rooms={rooms}
-              onSelectTechHub={() => {
-                joinRoom('tech-hub');
-                navigateTo('chat-sala', 'push');
-              }}
               onSelectRoom={(code) => {
                 joinRoom(code);
                 navigateTo('chat-sala', 'push');

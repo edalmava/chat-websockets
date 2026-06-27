@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
-const { ROLES, MODERATOR_ACTIONS, ADMIN_ACTIONS } = require('../config/constants');
+const { ROLES, MODERATOR_ACTIONS, ADMIN_ACTIONS, VALIDACION } = require('../config/constants');
 
 // Cliente JWKS singleton para verificación de tokens Supabase (ES256 asimétrica)
 const jwks = jwksClient({
@@ -45,7 +45,7 @@ async function verificarToken(token, logger) {
         return {
             userId: decoded.sub,
             email: decoded.email,
-            displayName: decoded.user_metadata?.display_name || decoded.email.split('@')[0],
+            displayName: (decoded.user_metadata?.display_name || decoded.email.split('@')[0]).slice(0, VALIDACION.USERNAME_MAX),
             role: userRole,
             tokenExp: decoded.exp
         };

@@ -43,5 +43,5 @@ export interface Room {
   description: string;
   onlineCount: number;
   unreadCount?: number;
-  code: 'general' | 'tech-hub' | 'gaming-zone' | 'creative-corner';
+  code: string;
 }

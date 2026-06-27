@@ -3,14 +3,12 @@ import { Room } from '../types';
 import { useChatStore } from '../stores/useChatStore';
 
 interface ListaSalasProps {
-  onSelectTechHub: () => void;
-  onSelectRoom?: (code: string) => void;
+  onSelectRoom: (code: string) => void;
   onNavigateToMessages: () => void;
   rooms: Room[];
 }
 
 export default function ListaSalas({
-  onSelectTechHub,
   onSelectRoom,
   onNavigateToMessages,
   rooms,
@@ -25,11 +23,7 @@ export default function ListaSalas({
   );
 
   const handleRoomClick = (roomCode: string) => {
-    if (roomCode === 'tech-hub') {
-      onSelectTechHub();
-    } else if (onSelectRoom) {
-      onSelectRoom(roomCode);
-    }
+    onSelectRoom(roomCode);
   };
 
   // Obtener estadísticas globales dinámicas

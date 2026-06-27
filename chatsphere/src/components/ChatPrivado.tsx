@@ -24,6 +24,7 @@ export default function ChatPrivado({
   const sendP2PTyping = useChatStore((state) => state.sendP2PTyping);
   const marcarVistoP2P = useChatStore((state) => state.marcarVistoP2P);
   const terminarP2PChat = useChatStore((state) => state.terminarP2PChat);
+  const addNotification = useChatStore((state) => state.addNotification);
 
   const [escribiendoLocal, setEscribiendoLocal] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -136,10 +137,16 @@ export default function ChatPrivado({
           >
             <span className="material-symbols-outlined text-xl">link_off</span>
           </button>
-          <button className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center">
+          <button
+            onClick={() => addNotification('info', 'Función de videollamada no disponible aún.')}
+            className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center"
+          >
             <span className="material-symbols-outlined text-xl">videocam</span>
           </button>
-          <button className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center">
+          <button
+            onClick={() => addNotification('info', 'Función de llamada de voz no disponible aún.')}
+            className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center"
+          >
             <span className="material-symbols-outlined text-xl">call</span>
           </button>
         </div>
