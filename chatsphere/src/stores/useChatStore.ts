@@ -7,7 +7,7 @@ import * as webrtcManager from '../utils/webrtcManager';
 
 interface ChatNotification {
   id: string;
-  tipo: 'info' | 'warning' | 'error' | 'invitation';
+  tipo: 'info' | 'warning' | 'error' | 'invitation' | 'call';
   mensaje: string;
   metadata?: any;
 }
@@ -33,6 +33,11 @@ interface ChatState {
   p2pConnectionStatus: Record<string, string>; // targetUserId -> status
   p2pTypingStatus: Record<string, boolean>; // targetUserId -> escribiendo
   
+  // Media Call (video/voice)
+  mediaCallState: 'idle' | 'ringing' | 'calling' | 'connected';
+  mediaCallType: 'video' | 'voice' | null;
+  mediaCallTargetUserId: string | null;
+
   // Silencio / Mute
   isMuted: boolean;
   muteDurationRemaining: number;
@@ -68,6 +73,14 @@ interface ChatState {
   terminarP2PChat: (targetUserId: string) => void;
   marcarVistoP2P: (targetUserId: string) => void;
   
+  // Media Call
+  iniciarLlamadaMedia: (targetUserId: string, tipo: 'video' | 'voice') => Promise<void>;
+  aceptarLlamadaMedia: () => Promise<void>;
+  rechazarLlamadaMedia: () => void;
+  finalizarLlamadaMedia: () => void;
+  alternarMicrofono: (activo: boolean) => void;
+  alternarCamara: (activo: boolean) => void;
+
   // Moderación / Admin
   kickUser: (userId: string, motivo: string) => void;
   muteUser: (userId: string, duracion: number) => void;
@@ -219,6 +232,32 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     onShowInvitation: (deUserId, deNombre, senal) => {
       get().addNotification('invitation', `${deNombre} quiere iniciar un chat privado P2P.`, { deUserId, senal });
+    },
+    onMediaCallReceived: (deUserId, deNombre, tipo) => {
+      set({ mediaCallState: 'ringing', mediaCallType: tipo, mediaCallTargetUserId: deUserId });
+      const icono = tipo === 'video' ? 'videocam' : 'call';
+      get().addNotification('call', `${deNombre} te está llamando (${tipo === 'video' ? 'videollamada' : 'voz'}).`, { deUserId, deNombre, tipo }, 0);
+    },
+    onMediaCallAccepted: (deUserId) => {
+      set({ mediaCallState: 'connected' });
+    },
+    onMediaCallRejected: (deUserId) => {
+      set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
+      const conn = webrtcManager.obtenerP2PConnections().get(deUserId);
+      get().addNotification('info', `${conn?.displayName || 'El usuario'} rechazó la llamada.`);
+    },
+    onMediaCallEnded: (deUserId, reason) => {
+      set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
+      if (reason !== 'user-hangup') {
+        const conn = webrtcManager.obtenerP2PConnections().get(deUserId);
+        get().addNotification('info', `Llamada finalizada con ${conn?.displayName || 'el usuario'}.`);
+      }
+    },
+    onRemoteStreamAdded: () => {
+      // no-op; the overlay reads streams directly from webrtcManager
+    },
+    onLocalStreamAdded: () => {
+      // no-op
     }
   });
 
@@ -445,6 +484,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     p2pConnectionStatus: {},
     p2pTypingStatus: {},
     
+    mediaCallState: 'idle',
+    mediaCallType: null,
+    mediaCallTargetUserId: null,
+
     isMuted: false,
     muteDurationRemaining: 0,
     
@@ -762,6 +805,10 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     terminarP2PChat: (targetUserId) => {
+      if (get().mediaCallTargetUserId === targetUserId) {
+        webrtcManager.finalizarLlamadaMedia(getWebRTCCallbacks());
+        set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
+      }
       webrtcManager.cerrarConexionP2P(targetUserId, 'Chat finalizado', getWebRTCCallbacks());
 
       set((state) => {
@@ -778,6 +825,41 @@ export const useChatStore = create<ChatState>((set, get) => {
       });
 
       get().navigateTo('mensajes-privados', 'push_back');
+    },
+
+    iniciarLlamadaMedia: async (targetUserId, tipo) => {
+      if (webrtcManager.estaEnLlamada()) {
+        get().addNotification('warning', 'Ya hay una llamada en curso.');
+        return;
+      }
+      await webrtcManager.iniciarLlamadaMedia(targetUserId, tipo, getWebRTCCallbacks());
+    },
+
+    aceptarLlamadaMedia: async () => {
+      const targetUserId = get().mediaCallTargetUserId;
+      if (!targetUserId) return;
+      await webrtcManager.aceptarLlamadaMedia(targetUserId, getWebRTCCallbacks());
+      set({ mediaCallState: 'connected' });
+    },
+
+    rechazarLlamadaMedia: () => {
+      const targetUserId = get().mediaCallTargetUserId;
+      if (!targetUserId) return;
+      webrtcManager.rechazarLlamadaMedia(targetUserId, getWebRTCCallbacks());
+      set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
+    },
+
+    finalizarLlamadaMedia: () => {
+      webrtcManager.finalizarLlamadaMedia(getWebRTCCallbacks());
+      set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
+    },
+
+    alternarMicrofono: (activo) => {
+      webrtcManager.alternarMicrofono(activo);
+    },
+
+    alternarCamara: (activo) => {
+      webrtcManager.alternarCamara(activo);
     },
 
     marcarVistoP2P: (targetUserId) => {
@@ -816,7 +898,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         notifications: [...state.notifications, { id, tipo, mensaje, metadata }]
       }));
 
-      if (tipo !== 'invitation') {
+      if (tipo !== 'invitation' && tipo !== 'call') {
         setTimeout(() => {
           get().removeNotification(id);
         }, duracion);

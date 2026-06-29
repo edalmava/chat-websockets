@@ -25,6 +25,14 @@ export default function ChatPrivado({
   const marcarVistoP2P = useChatStore((state) => state.marcarVistoP2P);
   const terminarP2PChat = useChatStore((state) => state.terminarP2PChat);
   const addNotification = useChatStore((state) => state.addNotification);
+  
+  // Media call state
+  const mediaCallState = useChatStore((state) => state.mediaCallState);
+  const mediaCallType = useChatStore((state) => state.mediaCallType);
+  const mediaCallTargetUserId = useChatStore((state) => state.mediaCallTargetUserId);
+  const iniciarLlamadaMedia = useChatStore((state) => state.iniciarLlamadaMedia);
+  const estaEnLlamada = mediaCallState === 'connected' || mediaCallState === 'calling' || mediaCallState === 'ringing';
+  const esLlamadaActiva = mediaCallState === 'connected' && mediaCallTargetUserId === targetUser.id;
 
   const [escribiendoLocal, setEscribiendoLocal] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -85,6 +93,11 @@ export default function ChatPrivado({
 
   // Formatear estado de conexión
   const getStatusText = () => {
+    if (esLlamadaActiva) {
+      if (mediaCallType === 'video') return 'En videollamada';
+      return 'En llamada de voz';
+    }
+    if (mediaCallTargetUserId === targetUser.id && mediaCallState === 'ringing') return 'Llamada entrante...';
     if (p2pTypingStatus) return 'escribiendo...';
     
     const status = p2pConnectionStatus ? p2pConnectionStatus.toLowerCase() : '';
@@ -119,6 +132,7 @@ export default function ChatPrivado({
             <div>
               <h2 className="font-semibold text-sm text-white leading-tight font-sans">{targetUser.name}</h2>
               <p className={`text-[10px] font-bold font-sans mt-0.5 ${
+                esLlamadaActiva ? 'text-indigo-400' :
                 p2pTypingStatus ? 'text-indigo-400 animate-pulse' :
                 isConnected ? 'text-emerald-400' : 'text-gray-500'
               }`}>
@@ -138,16 +152,32 @@ export default function ChatPrivado({
             <span className="material-symbols-outlined text-xl">link_off</span>
           </button>
           <button
-            onClick={() => addNotification('info', 'Función de videollamada no disponible aún.')}
-            className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center"
+            onClick={() => iniciarLlamadaMedia(targetUser.id, 'video')}
+            disabled={!isConnected || estaEnLlamada}
+            className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
+              esLlamadaActiva && mediaCallType === 'video'
+                ? 'text-indigo-400 bg-indigo-500/15'
+                : !isConnected || estaEnLlamada
+                ? 'text-gray-600 cursor-not-allowed'
+                : 'text-gray-400 hover:bg-white/10'
+            }`}
+            title={esLlamadaActiva ? 'En videollamada' : 'Iniciar videollamada'}
           >
-            <span className="material-symbols-outlined text-xl">videocam</span>
+            <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>videocam</span>
           </button>
           <button
-            onClick={() => addNotification('info', 'Función de llamada de voz no disponible aún.')}
-            className="active:scale-95 transition-transform text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center"
+            onClick={() => iniciarLlamadaMedia(targetUser.id, 'voice')}
+            disabled={!isConnected || estaEnLlamada}
+            className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
+              esLlamadaActiva && mediaCallType === 'voice'
+                ? 'text-indigo-400 bg-indigo-500/15'
+                : !isConnected || estaEnLlamada
+                ? 'text-gray-600 cursor-not-allowed'
+                : 'text-gray-400 hover:bg-white/10'
+            }`}
+            title={esLlamadaActiva ? 'En llamada de voz' : 'Iniciar llamada de voz'}
           >
-            <span className="material-symbols-outlined text-xl">call</span>
+            <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>call</span>
           </button>
         </div>
       </header>

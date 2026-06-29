@@ -6,6 +6,7 @@ import MensajesPrivados from './components/MensajesPrivados';
 import ChatPrivado from './components/ChatPrivado';
 import ChatSala from './components/ChatSala';
 import ListaSalas from './components/ListaSalas';
+import LlamadaOverlay from './components/LlamadaOverlay';
 
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
@@ -34,6 +35,11 @@ export default function App() {
   const removeNotification = useChatStore((state) => state.removeNotification);
   const acceptP2PInvitation = useChatStore((state) => state.acceptP2PInvitation);
   const rejectP2PInvitation = useChatStore((state) => state.rejectP2PInvitation);
+  
+  // Media call
+  const mediaCallState = useChatStore((state) => state.mediaCallState);
+  const aceptarLlamadaMedia = useChatStore((state) => state.aceptarLlamadaMedia);
+  const rechazarLlamadaMedia = useChatStore((state) => state.rechazarLlamadaMedia);
 
   // Inicializar autenticación y sockets — solo una vez al montar
   // Usamos getState() para evitar que la referencia de la función
@@ -118,7 +124,7 @@ export default function App() {
                   {n.tipo === 'error' ? 'error' : n.tipo === 'warning' ? 'warning' : 'info'}
                 </span>
                 <p className="text-xs text-gray-200 font-medium leading-relaxed flex-1">{n.mensaje}</p>
-                {n.tipo !== 'invitation' && (
+                {n.tipo !== 'invitation' && n.tipo !== 'call' && (
                   <button
                     onClick={() => removeNotification(n.id)}
                     className="text-gray-500 hover:text-gray-300 p-0.5 rounded-full"
@@ -144,6 +150,28 @@ export default function App() {
                       removeNotification(n.id);
                     }}
                     className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-[11px] font-bold text-white transition-all shadow-md shadow-indigo-600/20"
+                  >
+                    Aceptar
+                  </button>
+                </div>
+              )}
+              {n.tipo === 'call' && (
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      rechazarLlamadaMedia();
+                      removeNotification(n.id);
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-bold text-gray-400 transition-colors"
+                  >
+                    Rechazar
+                  </button>
+                  <button
+                    onClick={() => {
+                      aceptarLlamadaMedia();
+                      removeNotification(n.id);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-[11px] font-bold text-white transition-all shadow-md shadow-emerald-600/20"
                   >
                     Aceptar
                   </button>
@@ -216,6 +244,9 @@ export default function App() {
           )}
         </motion.div>
       </AnimatePresence>
+
+      {/* Media Call Overlay (sobre cualquier pantalla) */}
+      {mediaCallState !== 'idle' && <LlamadaOverlay />}
     </div>
   );
 }

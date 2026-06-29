@@ -5,6 +5,9 @@
 
 export type Screen = 'mensajes-privados' | 'chat-privado' | 'chat-sala' | 'lista-salas' | 'auth';
 
+export type CallType = 'video' | 'voice';
+export type CallState = 'idle' | 'ringing' | 'calling' | 'connected' | 'ended';
+
 export interface RoomUser {
   userId: string;
   displayName: string;

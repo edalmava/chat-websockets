@@ -171,3 +171,5 @@ bundle-report.html
 # !.gitkeep              # Mantener directorios vacíos
 # !certs/.gitkeep        # Si necesitas que los directorios existan
 # !/logs/.gitkeep
+
+docs/
