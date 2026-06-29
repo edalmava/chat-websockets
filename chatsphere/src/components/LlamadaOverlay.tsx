@@ -41,9 +41,11 @@ export default function LlamadaOverlay() {
       const remote = webrtcManager.obtenerStreamRemoto();
       if (remote && remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = remote;
+        remoteVideoRef.current.play().catch(() => {});
       }
       if (remote && remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remote;
+        remoteAudioRef.current.play().catch(() => {});
       }
     }
   }, [isConnected]);
@@ -117,10 +119,8 @@ export default function LlamadaOverlay() {
         />
       )}
 
-      {/* Audio remoto (solo en llamada de voz) */}
-      {isVoice && isConnected && (
-        <audio ref={remoteAudioRef} autoPlay />
-      )}
+      {/* Audio remoto (siempre montado para no perder contexto de autoplay) */}
+      <audio ref={remoteAudioRef} autoPlay className="hidden" />
 
       {/* Fondo con avatar en llamada de voz o ringing */}
       {(!isVideo || !isConnected) && (
