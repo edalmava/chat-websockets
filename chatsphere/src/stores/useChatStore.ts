@@ -235,8 +235,6 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     onMediaCallReceived: (deUserId, deNombre, tipo) => {
       set({ mediaCallState: 'ringing', mediaCallType: tipo, mediaCallTargetUserId: deUserId });
-      const icono = tipo === 'video' ? 'videocam' : 'call';
-      get().addNotification('call', `${deNombre} te está llamando (${tipo === 'video' ? 'videollamada' : 'voz'}).`, { deUserId, deNombre, tipo }, 0);
     },
     onMediaCallAccepted: (deUserId) => {
       set({ mediaCallState: 'connected' });

@@ -52,9 +52,9 @@ websockets/
 │   │   └── authMiddleware.js # Verificación JWT Supabase ES256
 │   ├── utils/
 │   │   ├── security.js       # CORS, sanitizeHtml, sanitizeObject
-   │   ├── validation.js     # Validación de mensajes y rate limiting
-   │   ├── redisClient.js    # Redis Streams y deduplicación
-   │   └── turnCredentials.js # Credenciales TURN HMAC-SHA1
+│   │   ├── validation.js     # Validación de mensajes y rate limiting
+│   │   ├── redisClient.js    # Redis Streams y deduplicación
+│   │   └── turnCredentials.js # Credenciales TURN HMAC-SHA1
 │   ├── Logger.js             # Logging JSON con rotación y retención
 │   └── index.js              # Server HTTP/WS entrypoint
 ├── public/                   # Frontend legacy (Vanilla JS + CSS)

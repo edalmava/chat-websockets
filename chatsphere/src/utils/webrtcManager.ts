@@ -781,13 +781,15 @@ export function manejarMensajeMedia(deUserId: string, data: any, callbacks: WebR
             const answerSdp = data.payload?.sdp;
             if (!answerSdp) return;
 
-            conn.pc.setRemoteDescription(new RTCSessionDescription(answerSdp)).catch(err => {
+            conn.pc.setRemoteDescription(new RTCSessionDescription(answerSdp)).then(() => {
+                mediaCallState = 'connected';
+                if (callbacks.onMediaCallAccepted) {
+                    callbacks.onMediaCallAccepted(deUserId);
+                }
+            }).catch(err => {
                 console.error('[WebRTC] Error al setRemoteDescription (media-answer):', err);
+                finalizarLlamadaMedia(callbacks);
             });
-
-            if (callbacks.onMediaCallAccepted) {
-                callbacks.onMediaCallAccepted(deUserId);
-            }
             break;
         }
 

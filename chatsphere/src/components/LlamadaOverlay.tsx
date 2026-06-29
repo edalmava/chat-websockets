@@ -4,6 +4,7 @@ import * as webrtcManager from '../utils/webrtcManager';
 
 export default function LlamadaOverlay() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
   const mediaCallState = useChatStore((s) => s.mediaCallState);
@@ -41,6 +42,9 @@ export default function LlamadaOverlay() {
       if (remote && remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = remote;
       }
+      if (remote && remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remote;
+      }
     }
   }, [isConnected]);
 
@@ -52,6 +56,10 @@ export default function LlamadaOverlay() {
       if (remote && remoteVideoRef.current && remoteVideoRef.current.srcObject !== remote) {
         remoteVideoRef.current.srcObject = remote;
         remoteVideoRef.current.play().catch(() => {});
+      }
+      if (remote && remoteAudioRef.current && remoteAudioRef.current.srcObject !== remote) {
+        remoteAudioRef.current.srcObject = remote;
+        remoteAudioRef.current.play().catch(() => {});
       }
       const local = webrtcManager.obtenerStreamLocal();
       if (local && localVideoRef.current && localVideoRef.current.srcObject !== local) {
@@ -107,6 +115,11 @@ export default function LlamadaOverlay() {
           playsInline
           className="absolute inset-0 w-full h-full object-cover"
         />
+      )}
+
+      {/* Audio remoto (solo en llamada de voz) */}
+      {isVoice && isConnected && (
+        <audio ref={remoteAudioRef} autoPlay />
       )}
 
       {/* Fondo con avatar en llamada de voz o ringing */}
