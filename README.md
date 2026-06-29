@@ -1,42 +1,41 @@
 # 💬 Secure Real-Time Chat & P2P (WebSocket + WebRTC)
 
-Plataforma de comunicación en tiempo real con WebSockets para chats grupales y WebRTC para conversaciones P2P directas con cifrado de extremo a extremo.
+Proyecto de chat en tiempo real con servidor WebSocket seguro, chat de salas públicas y chat privado P2P mediante WebRTC.
 
 ---
 
 ## ✨ Características Principales
 
-### 🛡️ Seguridad y Robustez
-- **Validación CORS Estricta:** Control total sobre qué dominios pueden conectarse al servidor.
-- **Autenticación JWT (ES256 asimétrica):** Token verificado contra Supabase JWKS. El token se envía como primer mensaje WebSocket, **no en la URL** (elimina exposición en logs y referers).
-- **Protección contra XSS:** Sanitización recursiva de objetos y HTML tanto en el cliente como en el servidor.
-- **Rate Limiting por usuario:** Sistema de control de inundación (spam) configurable (5 msg/s).
-- **Rate Limiting por IP:** Máximo 45 conexiones simultáneas y 15 intentos/segundo por dirección IP (configurable via `IP_MAX_CONEXIONES` / `IP_MAX_INTENTOS`).
-- **Límite de usuarios por sala:** Máximo 50 usuarios simultáneos por sala.
-- **Control de sesiones duplicadas:** Detección y cierre de sesiones simultáneas del mismo usuario.
-- **Jerarquía de roles:** `user` → `moderator` → `admin` con permisos granulados para acciones de moderación.
-- **Expiración activa de sesión:** Heartbeat cada 30s que desconecta tokens expirados (con margen de 2min).
-- **Reconexión Inteligente:** Cliente con algoritmo de backoff exponencial para recuperar conexiones perdidas. Usa el token JWT más reciente (actualizado via `TOKEN_REFRESHED`).
-- **Límite de candidatos ICE:** Protección contra DoS por buffer de candidatos WebRTC (máx 50).
-- **Límite de conexiones P2P:** Máximo 10 conexiones WebRTC simultáneas por cliente.
-- **Límite de mensajes P2P:** Payload máximo de 5000 caracteres por mensaje en DataChannel.
-- **Sin `prompt()` ni `alert()`:** Reemplazados por modal input (`mostrarModalInput`) y toasts (`mostrarNotificacion`).
+### 🛡️ Seguridad y Control
+- **Autenticación JWT** enviada como primer mensaje WebSocket (`auth`), nunca en la URL.
+- **Verificación de JWKS ES256** contra Supabase, sin soporte HS256.
+- **Validación de orígenes** rígida mediante `ALLOWED_ORIGINS`.
+- **Control de rate limit** por IP y por usuario.
+- **Límite de usuarios por sala**: 50 usuarios máximo.
+- **Detección de sesión duplicada**: cierra la sesión anterior cuando un usuario se reconecta.
+- **Permisos y roles**: `user`, `moderator`, `admin`.
+- **Silenciamiento y expulsión** controlado por moderadores/admins.
+- **Heartbeat activo** cada 30s y cierre de sesión si el JWT expira.
 
-### 🚀 Comunicación Avanzada
-- **Salas de Chat (Rooms):** Soporte nativo para 10 canales (General, Desarrollo, Soporte, Random, Gaming, Música, Cine, Deportes, Tecnología, Off-Topic).
-- **WebRTC P2P Multi-chat:** Conversaciones privadas directas entre usuarios, cifradas de extremo a extremo, sin pasar mensajes de chat por el servidor.
-- **Indicadores de Estado:** Sistema de "Está escribiendo..." y confirmaciones de lectura (✓✓) en chats P2P.
-- **Infraestructura ICE/TURN:** Integración con servidores STUN/TURN con credenciales HMAC-SHA1 temporales (1h) y renovación automática cada 50min.
+### 🚀 Chat y WebRTC
+- **Salas públicas** con mensajes de chat agrupados por salas.
+- **Chat privado P2P** usando WebRTC DataChannel.
+- **Señalización WebRTC** relayed through the WebSocket server.
+- **Credenciales ICE/STUN/TURN** temporales alimentadas desde el servidor.
+- **Máximo 10 conexiones P2P activas** por cliente.
+- **Límite de 50 candidatos ICE** por conexión peers para evitar DoS.
+- **Mensajes P2P** limitados a 5000 caracteres.
 
-### 🏗️ Arquitectura Modular
-- **`server/index.js`**: Punto de entrada con gestión de apagado limpio (Graceful Shutdown).
-- **`handlers/socketHandler.js`**: Orquestador central de eventos, señalización y moderación.
-- **`config/constants.js`**: Configuración centralizada de puertos, orígenes, límites y roles.
-- **`middleware/authMiddleware.js`**: Verificación JWT asimétrica (ES256) contra Supabase JWKS.
-- **`utils/security.js`**: CORS, sanitización HTML y sanitización recursiva de objetos.
-- **`utils/validation.js`**: Validación de entrada, rate limiting por usuario y duración de mute.
-- **`utils/turnCredentials.js`**: Generación de credenciales TURN con HMAC-SHA1.
-- **`Logger.js`**: Motor de auditoría profesional con buffer, rotación automática (10MB), retención (30 días) y resúmenes periódicos de seguridad.
+### 🧩 Arquitectura del servidor
+- `server/index.js` — servidor HTTP + WebSocket y cierre limpio.
+- `server/handlers/socketHandler.js` — lógica de eventos, salas, moderación y WebRTC.
+- `server/config/constants.js` — configuración de origen, salas, límites, roles y Redis.
+- `server/middleware/authMiddleware.js` — verificación de JWT Supabase.
+- `server/utils/security.js` — validación de origen y sanitización.
+- `server/utils/validation.js` — validación de mensajes, roles y rate limiting.
+- `server/utils/redisClient.js` — persistencia de chat en Redis Streams.
+- `server/utils/turnCredentials.js` — generación de TURN HMAC-SHA1.
+- `server/Logger.js` — logging estructurado con rotación.
 
 ---
 
@@ -46,126 +45,155 @@ Plataforma de comunicación en tiempo real con WebSockets para chats grupales y 
 websockets/
 ├── server/                   # Backend Node.js (CommonJS)
 │   ├── config/
-│   │   └── constants.js      # Puertos, orígenes, roles, límites
+│   │   └── constants.js      # Puertos, orígenes, roles, límites y Redis
 │   ├── handlers/
-│   │   └── socketHandler.js  # Eventos WS: chat, salas, señalización, moderación
+│   │   └── socketHandler.js  # Eventos WS: auth, join, chat, webrtc, moderación
 │   ├── middleware/
-│   │   └── authMiddleware.js # Verificación JWT (ES256 vía JWKS)
+│   │   └── authMiddleware.js # Verificación JWT Supabase ES256
 │   ├── utils/
 │   │   ├── security.js       # CORS, sanitizeHtml, sanitizeObject
-│   │   ├── validation.js     # Validación de entrada y rate limiting
-│   │   └── turnCredentials.js # Credenciales TURN HMAC-SHA1
-│   ├── Logger.js             # Logging JSON con buffer y rotación
-│   └── index.js              # Servidor HTTP/WS entrypoint
-├── public/                   # Frontend (Vanilla JS + CSS3 + Supabase SDK)
-│   ├── index.html            # Interfaz de usuario
-│   ├── js/
-│   │   ├── chat.js           # Orquestador central
-│   │   ├── wsManager.js      # Gestor de conexión WebSocket
-│   │   ├── uiManager.js      # Gestor de interfaz de usuario
-│   │   ├── webrtcManager.js  # Gestor de conexiones P2P WebRTC
-│   │   ├── supabaseClient.js # Wrapper de Supabase Auth
-│   │   └── config.js         # Configuración del cliente Supabase
-│   └── css/styles.css        # Diseño responsive
-└── logs/                     # Directorio de logs (auto-generado)
+   │   ├── validation.js     # Validación de mensajes y rate limiting
+   │   ├── redisClient.js    # Redis Streams y deduplicación
+   │   └── turnCredentials.js # Credenciales TURN HMAC-SHA1
+│   ├── Logger.js             # Logging JSON con rotación y retención
+│   └── index.js              # Server HTTP/WS entrypoint
+├── public/                   # Frontend legacy (Vanilla JS + CSS)
+│   ├── index.html            # UI de chat
+│   ├── css/styles.css        # Estilos responsive
+│   └── js/                   # Lógica UI, WebSocket, WebRTC, Supabase
+└── chatsphere/               # Frontend React 19 + Vite + Zustand
+    ├── src/                  # App React activa
+    ├── package.json          # Dependencias del frontend React
+    └── README.md             # README específico del cliente React
 ```
 
 ---
 
 ## 🚀 Inicio Rápido (Desarrollo)
 
-### 1. Requisitos Previos
-- Node.js (v16+)
-- Archivo `server/.env` con:
+### Requisitos
+- Node.js 16+
+- Redis disponible en `REDIS_URL` o `redis://localhost:6379`
+- `server/.env` con:
   ```env
   TURN_SECRET=tu_secret_turn
   TURN_URL_UDP=turn:turn.ejemplo.com:5349?transport=udp
   TURN_URL_TCP=turn:turn.ejemplo.com:5349?transport=tcp
   STUN_URL=stun:stun.ejemplo.com:5349
   TURN_REALM=turn.ejemplo.com
+  REDIS_URL=redis://localhost:6379
+  ```
 
-  # Opcionales (valores por defecto: 45 y 15):
+Opcionales:
+  ```env
   IP_MAX_CONEXIONES=45
   IP_MAX_INTENTOS=15
+  STREAM_MAXLEN=1000
+  STREAM_MAX_AGE_HOURS=24
+  CATCHUP_LIMIT=50
+  PORT=8443
   ```
-  > Nota: La verificación de tokens usa exclusivamente JWKS asimétrica (ES256). No se necesita `SUPABASE_JWT_SECRET`.
 
-### 2. Instalación
+> La autenticación JWT se verifica contra Supabase JWKS ES256. No se usa `SUPABASE_JWT_SECRET`.
+
+### Iniciar el servidor
 ```bash
 cd server
 npm install
-```
-
-### 3. Iniciar el Servidor
-```bash
 npm start
 ```
-> El servidor inicia en `ws://localhost:8443`. No sirve archivos estáticos.
 
-### 4. Acceder al Cliente
-Abre `public/index.html` con un servidor local (Live Server en puerto 5500) cuyo origen esté en `ALLOWED_ORIGINS` de `constants.js`.
+### Iniciar el frontend React activo
+```bash
+cd chatsphere
+npm install
+npm run dev
+```
 
----
-
-## 🔐 Flujo de Autenticación
-
-1. El cliente se conecta al WebSocket **sin token en la URL**.
-2. Como primer mensaje, envía `{ tipo: "auth", token: "<JWT>" }`.
-3. El servidor verifica el token contra Supabase JWKS (solo ES256).
-4. Si es válido, responde con `auth-info` y `salas-disponibles`.
-5. El servidor monitorea expiración del token via heartbeat (cada 30s).
+### Usar el frontend legacy
+- Sirve `public/index.html` desde un servidor local como Live Server o `npx serve`.
+- Asegúrate de que el origen esté listado en `server/config/constants.js`.
 
 ---
 
-## 🛡️ Medidas de Seguridad Implementadas
+## 🔧 Funcionamiento del sistema
 
-| Medida | Descripción | Implementación |
-|--------|-------------|----------------|
-| Autenticación vía mensaje | Token JWT no viaja en query string | `wsManager.js` + `socketHandler.js` |
-| Solo ES256 asimétrica | Eliminado soporte HS256 (simétrico) | `authMiddleware.js` |
-| Token actualizable en reconexión | Usa el último token JWT (via `TOKEN_REFRESHED`) | `wsManager.js` + `chat.js` |
-| Rate limiting por IP | 45 conexiones simultáneas, 15/s (configurable) | `socketHandler.js` + `constants.js` |
-| Límite de usuarios por sala | Máximo 50 por sala | `socketHandler.js` + `constants.js` |
-| Límite de candidatos ICE | Máximo 50 por conexión P2P | `webrtcManager.js` |
-| Límite de conexiones P2P | Máximo 10 simultáneas por cliente | `webrtcManager.js` |
-| Límite de mensajes P2P | Máximo 5000 caracteres por mensaje | `webrtcManager.js` |
-| Chat solo en sala | Mensajes requieren join previo | `socketHandler.js` |
-| Auto-degradación bloqueada | Admin no puede cambiarse rol a sí mismo | `socketHandler.js` |
-| Heartbeat con expiración | Desconexión automática de tokens vencidos | `socketHandler.js` (interval 30s) |
-| Sin funciones globales | Todos los event listeners via JS | `index.html` + `uiManager.js` |
-| Notificaciones UI | Reemplazo de alert() y prompt() nativas | `uiManager.js` + `styles.css` |
+### Backend
+- Gestiona conexiones WS con `ws`.
+- Valida CORS, IP rate limit y conexión de token.
+- Recibe el JWT como primer mensaje `auth`.
+- Emite `salas-disponibles` y `auth-info` tras auth.
+- Maneja tipos: `join`, `chat`, `catch-up`, `typing`, `webrtc-signal`, `get-ice-config`, `token_refresh`, `kick_user`, `mute_user`, `cambiar_rol`.
+- Persiste mensajes de sala en Redis Streams.
+- Hace heartbeat de cliente y cierra si el JWT expiró.
+- Renueva credenciales ICE cada 50 minutos.
 
----
+### Frontend React
+- React 19 + Vite + Zustand.
+- Autenticación y estado de sesión.
+- Navegación entre auth, lista de salas, chat de sala y chat privado.
+- Reconexión con backoff exponencial.
+- Notificaciones flotantes en lugar de alertas nativas.
 
-## 📊 Monitoreo y Auditoría
-
-Logs estructurados (JSON) en `logs/` con:
-- Intentos de conexión rechazados (CORS, IP rate limit, auth fallido)
-- Violaciones de rate limit por usuario e IP
-- Eventos de moderación (kick, mute, cambio de rol)
-- Señalización WebRTC
-- Estadísticas periódicas de usuarios activos
-- Rotación automática a 10MB y retención de 30 días
+### Frontend legacy
+- Cliente vanilla JS para autenticación, salas y chat.
+- Paquete simple para pruebas y demos.
 
 ---
 
-## 📝 Roadmap
-
-- [x] Autenticación JWT con Supabase (ES256 vía JWKS)
-- [x] Rate limiting por IP y por usuario (configurable vía env)
-- [x] Límite de usuarios por sala (50)
-- [x] Protección contra DoS en WebRTC (candidatos ICE, límite de conexiones P2P)
-- [x] Notificaciones UI no bloqueantes (sin alert() ni prompt())
-- [x] Jerarquía de roles validada en servidor para moderación
-- [x] Reconexión con token JWT actualizado
-- [ ] Persistencia de historial de mensajes públicos en base de datos
-- [ ] Transferencia de archivos mediante WebRTC DataChannels
-- [ ] Soporte para llamadas de audio/video P2P
-- [ ] Re-validación de JWT en cada acción de moderación
+## 🛡️ Seguridad y límites
+- JWT enviado en mensaje `auth`.
+- JWKS ES256 obligatorio.
+- Orígenes estrictos con `ALLOWED_ORIGINS`.
+- Rate limit por IP y usuario.
+- Máximo 50 usuarios por sala.
+- Sesión duplicada cierra la conexión anterior.
+- Moderadores/admins pueden silenciar o expulsar.
+- No se permite cambiar el propio rol.
+- Solo usuarios en la misma sala pueden intercambiar señalización WebRTC.
+- Límite de 50 candidatos ICE.
+- Límite de 10 conexiones P2P activas.
+- Mensajes P2P limitados a 5000 caracteres.
+- Sanitización de entrada en cliente y servidor.
 
 ---
 
-## 📄 Licencia y Créditos
+## 📦 Dependencias principales
 
-Desarrollado con enfoque en la excelencia técnica y seguridad.
-© 2026 Edalmava.
+### Servidor
+- `ws`
+- `dotenv`
+- `jsonwebtoken`
+- `jwks-rsa`
+- `ioredis`
+
+### Frontend React
+- `react`
+- `react-dom`
+- `vite`
+- `zustand`
+- `@supabase/supabase-js`
+- `@vitejs/plugin-react`
+- `tailwindcss`
+
+---
+
+## 📌 Estado actual
+- ✅ Backend WebSocket seguro con auth JWT.
+- ✅ Chat de sala con persistencia en Redis.
+- ✅ Señalización WebRTC para chat P2P.
+- ✅ Roles y moderación en servidor.
+- ✅ Frontend React funcional con reconexión.
+- ❌ No hay persistencia de usuarios fuera de Redis.
+- ❌ No hay audio/video directo; solo chat de texto P2P.
+
+---
+
+## 📚 Referencias clave
+- `server/config/constants.js`
+- `server/handlers/socketHandler.js`
+- `server/middleware/authMiddleware.js`
+- `server/utils/redisClient.js`
+- `chatsphere/src/stores/useChatStore.ts`
+- `chatsphere/src/utils/wsManager.ts`
+- `chatsphere/src/utils/webrtcManager.ts`
