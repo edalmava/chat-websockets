@@ -19,6 +19,7 @@ export default function MensajesPrivados({
   const roomUsers = useChatStore((state) => state.roomUsers);
   const startP2PChat = useChatStore((state) => state.startP2PChat);
   const navigateTo = useChatStore((state) => state.navigateTo);
+  const p2pConnectionStatus = useChatStore((state) => state.p2pConnectionStatus);
 
   const filteredThreads = chatThreads.filter((thread) =>
     thread.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -155,9 +156,11 @@ export default function MensajesPrivados({
                     <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg ${hasColor}`}>
                       {thread.name.substring(0, 2).toUpperCase()}
                     </div>
-                    {thread.isOnline && (
+                    {thread.isOnline ? (
                       <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-[#111113] active-dot"></div>
-                    )}
+                    ) : p2pConnectionStatus[thread.id] ? (
+                      <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-amber-500 rounded-full border-2 border-[#111113] animate-pulse"></div>
+                    ) : null}
                   </div>
 
                   <div className="flex-1 min-w-0">

@@ -32,6 +32,7 @@ interface ChatState {
   activeP2PUserId: string | null;
   p2pConnectionStatus: Record<string, string>; // targetUserId -> status
   p2pTypingStatus: Record<string, boolean>; // targetUserId -> escribiendo
+  previousP2PConnections: Record<string, string>; // targetUserId -> displayName (para restaurar tras reconexión WS)
   
   // Media Call (video/voice)
   mediaCallState: 'idle' | 'ringing' | 'calling' | 'connected';
@@ -75,6 +76,7 @@ interface ChatState {
   rejectP2PInvitation: (deUserId: string) => void;
   closeP2PChat: (targetUserId: string) => void;
   terminarP2PChat: (targetUserId: string) => void;
+  reconnectP2P: (targetUserId: string) => Promise<void>;
   marcarVistoP2P: (targetUserId: string) => void;
   
   // Media Call
@@ -433,6 +435,23 @@ export const useChatStore = create<ChatState>((set, get) => {
         webrtcManager.manejarSenalWebRTC(data.de, data.deNombre, data.data, getWebRTCCallbacks());
         break;
 
+      case 'peer-offline':
+        {
+          // Un peer se desconectó del WS — la conexión P2P probablemente caerá pronto
+          const connP2P = webrtcManager.obtenerP2PConnections().get(data.userId);
+          if (connP2P) {
+            set((state) => ({
+              p2pConnectionStatus: { ...state.p2pConnectionStatus, [data.userId]: 'reconnecting' },
+              p2pThreads: state.p2pThreads.map(t =>
+                t.id === data.userId
+                  ? { ...t, lastMessage: `${data.displayName || 'El usuario'} se ha desconectado. Reconectando...` }
+                  : t
+              )
+            }));
+          }
+        }
+        break;
+
       case 'kicked':
         get().addNotification('error', `Fuiste expulsado por el moderador ${data.payload.por}. Motivo: ${data.payload.motivo}`, null, 10000);
         get().logout();
@@ -546,6 +565,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     activeP2PUserId: null,
     p2pConnectionStatus: {},
     p2pTypingStatus: {},
+    previousP2PConnections: {},
     
     mediaCallState: 'idle',
     mediaCallType: null,
@@ -621,10 +641,34 @@ export const useChatStore = create<ChatState>((set, get) => {
                          get().currentRoomCode === 'gaming-zone' ? 'Gaming Zone' : 'Creative Corner';
             get().joinRoom(sala);
           }
+
+          // Restaurar conexiones P2P que estaban activas antes de la desconexión WS
+          const prevConnections = get().previousP2PConnections;
+          if (prevConnections && Object.keys(prevConnections).length > 0) {
+            for (const [targetUserId, displayName] of Object.entries(prevConnections)) {
+              webrtcManager.iniciarConexionP2P(targetUserId, displayName, getWebRTCCallbacks());
+            }
+            set({ previousP2PConnections: {} });
+          }
         },
         onClose: (event) => {
-          webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks());
-          set({ wsStatus: 'disconnected', wsInitializing: false });
+          // Guardar conexiones P2P existentes antes de procesar la desconexión
+          const p2pConns = webrtcManager.obtenerP2PConnections();
+          const previousConnections: Record<string, string> = {};
+          p2pConns.forEach((conn, userId) => {
+            previousConnections[userId] = conn.displayName;
+          });
+
+          // Para códigos fatales (4001, 4002, 4003) → destruir todo P2P
+          // Para otros → marcar como reconectando sin destruir
+          if (event.code === 4001 || event.code === 4002 || event.code === 4003) {
+            webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks(), true);
+            webrtcManager.cancelarTodasLasReconexiones();
+          } else {
+            webrtcManager.marcarTodasComoReconnecting(getWebRTCCallbacks());
+          }
+
+          set({ wsStatus: 'disconnected', wsInitializing: false, previousP2PConnections: previousConnections });
 
           if (event.code === 4001) {
             get().addNotification('error', 'Sesión expirada o token inválido.');
@@ -708,7 +752,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       });
 
       wsManager.cerrarConexion();
-      webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks());
+      webrtcManager.cancelarTodasLasReconexiones();
+      webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks(), true);
       
       try {
         await supabaseClient.cerrarSesion();
@@ -867,7 +912,8 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     rejectP2PInvitation: (deUserId) => {
-      webrtcManager.cerrarConexionP2P(deUserId, 'Invitación rechazada', getWebRTCCallbacks());
+      webrtcManager.cancelarReconexionesP2P(deUserId);
+      webrtcManager.cerrarConexionP2P(deUserId, 'Invitación rechazada', getWebRTCCallbacks(), true);
     },
 
     closeP2PChat: (targetUserId) => {
@@ -880,7 +926,8 @@ export const useChatStore = create<ChatState>((set, get) => {
         webrtcManager.finalizarLlamadaMedia(getWebRTCCallbacks());
         set({ mediaCallState: 'idle', mediaCallType: null, mediaCallTargetUserId: null });
       }
-      webrtcManager.cerrarConexionP2P(targetUserId, 'Chat finalizado', getWebRTCCallbacks());
+      webrtcManager.cancelarReconexionesP2P(targetUserId);
+      webrtcManager.cerrarConexionP2P(targetUserId, 'Chat finalizado', getWebRTCCallbacks(), true);
 
       set((state) => {
         revocarUrlsArchivos(state.p2pMessages[targetUserId] || []);
@@ -897,6 +944,35 @@ export const useChatStore = create<ChatState>((set, get) => {
       });
 
       get().navigateTo('mensajes-privados', 'push_back');
+    },
+
+    reconnectP2P: async (targetUserId) => {
+      // Si ya hay una conexión activa, no hacer nada
+      const existing = webrtcManager.obtenerP2PConnections().get(targetUserId);
+      if (existing && existing.pc.connectionState === 'connected') return;
+
+      // Cerrar conexión existente si la hay (está en estado roto)
+      if (existing) {
+        webrtcManager.cancelarReconexionesP2P(targetUserId);
+        webrtcManager.cerrarConexionP2P(targetUserId, 'Reconectando...', getWebRTCCallbacks(), true);
+      }
+
+      // Obtener displayName del thread
+      const thread = get().p2pThreads.find(t => t.id === targetUserId);
+      const displayName = thread?.name || 'Usuario';
+
+      set((state) => ({
+        activeP2PUserId: targetUserId,
+        p2pConnectionStatus: { ...state.p2pConnectionStatus, [targetUserId]: 'connecting' },
+        p2pThreads: state.p2pThreads.map(t =>
+          t.id === targetUserId
+            ? { ...t, isOnline: false, lastMessage: 'Reconectando...' }
+            : t
+        )
+      }));
+
+      webrtcManager.establecerUsuarioP2PActivo(targetUserId);
+      await webrtcManager.iniciarConexionP2P(targetUserId, displayName, getWebRTCCallbacks());
     },
 
     iniciarLlamadaMedia: async (targetUserId, tipo) => {

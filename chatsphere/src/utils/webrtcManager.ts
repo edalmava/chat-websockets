@@ -51,6 +51,17 @@ const MAX_P2P_MESSAGE_LENGTH = 5000; // Máximo de caracteres por mensaje P2P
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const CHUNK_SIZE = 16 * 1024; // 16KB por chunk
 
+// --- Reconexión P2P ---
+const DISCONNECTED_GRACE_MS = 10_000; // 10s antes de destruir conexión 'disconnected'
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY = 2000; // backoff: 2s, 4s, 8s, 16s, 32s
+const disconnectedTimers = new Map<string, NodeJS.Timeout>();
+const pendingReconnections = new Map<string, {
+    targetUserId: string;
+    displayName: string;
+    attempts: number;
+}>();
+
 const ALLOWED_FILE_TYPES = new Set([
     'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
     'application/pdf',
@@ -135,11 +146,75 @@ export function establecerUsuarioP2PActivo(userId: string | null) {
 }
 
 /**
+ * Limpia el timer de período de gracia para un usuario en estado 'disconnected'
+ */
+function limpiarTimerDesconexion(targetUserId: string) {
+    const timer = disconnectedTimers.get(targetUserId);
+    if (timer) {
+        clearTimeout(timer);
+        disconnectedTimers.delete(targetUserId);
+    }
+}
+
+/**
+ * Intenta reconectar automáticamente con un peer tras desconexión involuntaria
+ */
+async function intentarReconexionP2P(targetUserId: string, callbacks: WebRTCCallbacks) {
+    const pending = pendingReconnections.get(targetUserId);
+    if (!pending) return;
+
+    // Si ya hay una conexión activa para ese usuario, cancelar
+    if (p2pManager.has(targetUserId)) {
+        pendingReconnections.delete(targetUserId);
+        return;
+    }
+
+    console.log(`[WebRTC] Intentando reconexión con ${pending.displayName} (intento ${pending.attempts}/${MAX_RECONNECT_ATTEMPTS})`);
+
+    try {
+        await iniciarConexionP2P(pending.targetUserId, pending.displayName, callbacks);
+        pendingReconnections.delete(targetUserId);
+    } catch (err) {
+        console.error(`[WebRTC] Error en reconexión con ${pending.displayName}:`, err);
+        pendingReconnections.delete(targetUserId);
+    }
+}
+
+/**
+ * Cancela reconexiones pendientes para un usuario específico
+ */
+export function cancelarReconexionesP2P(targetUserId: string) {
+    pendingReconnections.delete(targetUserId);
+    limpiarTimerDesconexion(targetUserId);
+}
+
+/**
+ * Cancela todas las reconexiones pendientes
+ */
+export function cancelarTodasLasReconexiones() {
+    pendingReconnections.clear();
+    disconnectedTimers.forEach(timer => clearTimeout(timer));
+    disconnectedTimers.clear();
+}
+
+/**
+ * Marca todas las conexiones P2P como 'reconnecting' sin destruirlas
+ */
+export function marcarTodasComoReconnecting(callbacks: WebRTCCallbacks = {}) {
+    p2pManager.forEach((conn, targetUserId) => {
+        conn.status = 'reconnecting';
+        if (callbacks.onP2PStatusChanged) {
+            callbacks.onP2PStatusChanged(targetUserId, 'reconnecting', conn.typing);
+        }
+    });
+}
+
+/**
  * Inicia una nueva conexión PeerConnection (WebRTC) como emisor (Offer)
  */
 export async function iniciarConexionP2P(targetUserId: string, displayName: string, callbacks: WebRTCCallbacks = {}) {
     if (p2pManager.has(targetUserId)) {
-        cerrarConexionP2P(targetUserId, 'Reiniciando conexión', callbacks);
+        cerrarConexionP2P(targetUserId, 'Reiniciando conexión', callbacks, true);
     }
 
     if (p2pManager.size >= MAX_P2P_CONNECTIONS) {
@@ -202,11 +277,40 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
             callbacks.onP2PStatusChanged(targetUserId, pc.connectionState, conn.typing);
         }
 
-        if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+        // 'failed' y 'closed' → destruir inmediatamente
+        if (['failed', 'closed'].includes(pc.connectionState)) {
+            limpiarTimerDesconexion(targetUserId);
             const motivo = pc.connectionState === 'failed'
                 ? 'Conexión WebRTC fallida'
                 : `${conn.displayName} se ha desconectado`;
             cerrarConexionP2P(targetUserId, motivo, callbacks);
+            return;
+        }
+
+        // 'disconnected' → período de gracia antes de destruir
+        if (pc.connectionState === 'disconnected') {
+            limpiarTimerDesconexion(targetUserId);
+
+            if (callbacks.onP2PStatusChanged) {
+                callbacks.onP2PStatusChanged(targetUserId, 'reconnecting', conn.typing);
+            }
+
+            const timer = setTimeout(() => {
+                const connActual = p2pManager.get(targetUserId);
+                if (connActual && connActual.pc.connectionState !== 'connected') {
+                    cerrarConexionP2P(targetUserId, `${conn.displayName} se ha desconectado`, callbacks);
+                }
+                disconnectedTimers.delete(targetUserId);
+            }, DISCONNECTED_GRACE_MS);
+
+            disconnectedTimers.set(targetUserId, timer);
+            return;
+        }
+
+        // 'connected' → limpiar timer de gracia si existía
+        if (pc.connectionState === 'connected') {
+            limpiarTimerDesconexion(targetUserId);
+            pendingReconnections.delete(targetUserId);
         }
     };
 
@@ -266,7 +370,7 @@ export async function manejarSenalWebRTC(de: string, deNombre: string, senal: an
     // Si es una oferta entrante, mostramos invitación (limpiando conexión previa si existía)
     if (senal.tipo === 'offer') {
         if (p2pManager.has(de)) {
-            cerrarConexionP2P(de, 'Nueva oferta entrante', callbacks);
+            cerrarConexionP2P(de, 'Nueva oferta entrante', callbacks, true);
         }
         if (p2pManager.size >= MAX_P2P_CONNECTIONS) {
             console.warn(`[WebRTC] Límite de ${MAX_P2P_CONNECTIONS} conexiones P2P alcanzado, oferta de ${deNombre} rechazada`);
@@ -550,10 +654,13 @@ export function marcarVistoP2P(targetUserId: string) {
 
 /**
  * Cierra la conexión P2P con un usuario
+ * @param intencional - Si es true, no intenta reconexión automática (ej: logout, terminarChat)
  */
-export function cerrarConexionP2P(targetUserId: string, motivo = 'Conexión cerrada', callbacks: WebRTCCallbacks = {}) {
+export function cerrarConexionP2P(targetUserId: string, motivo = 'Conexión cerrada', callbacks: WebRTCCallbacks = {}, intencional = false) {
     const conn = p2pManager.get(targetUserId);
     if (!conn) return;
+
+    limpiarTimerDesconexion(targetUserId);
 
     if (targetUserId === mediaTargetUserId) {
         finalizarLlamadaMedia(callbacks);
@@ -566,23 +673,52 @@ export function cerrarConexionP2P(targetUserId: string, motivo = 'Conexión cerr
         conn.pc.close();
     }
 
+    const displayNameGuardado = conn.displayName;
     p2pManager.delete(targetUserId);
 
     if (activeP2PUser === targetUserId) {
         activeP2PUser = null;
     }
 
+    // Si la desconexión NO fue intencional, programar reconexión automática
+    if (!intencional) {
+        const intentos = pendingReconnections.get(targetUserId)?.attempts || 0;
+        if (intentos < MAX_RECONNECT_ATTEMPTS) {
+            pendingReconnections.set(targetUserId, {
+                targetUserId,
+                displayName: displayNameGuardado,
+                attempts: intentos + 1
+            });
+
+            const delay = RECONNECT_BASE_DELAY * Math.pow(2, intentos);
+            console.log(`[WebRTC] Programando reconexión con ${displayNameGuardado} en ${delay}ms (intento ${intentos + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+
+            setTimeout(() => {
+                intentarReconexionP2P(targetUserId, callbacks);
+            }, delay);
+
+            // Notificar al store que estamos reconectando
+            if (callbacks.onP2PStatusChanged) {
+                callbacks.onP2PStatusChanged(targetUserId, 'reconnecting');
+            }
+            return; // No disparar onP2PConnectionClosed aún
+        }
+    }
+
+    pendingReconnections.delete(targetUserId);
+
     if (callbacks.onP2PConnectionClosed) {
-        callbacks.onP2PConnectionClosed(targetUserId, conn.displayName, motivo);
+        callbacks.onP2PConnectionClosed(targetUserId, displayNameGuardado, motivo);
     }
 }
 
 /**
  * Cierra absolutamente todas las conexiones P2P activas
+ * @param intencional - Si es true, no intenta reconexión automática
  */
-export function cerrarTodasLasConexionesP2P(callbacks: WebRTCCallbacks = {}) {
+export function cerrarTodasLasConexionesP2P(callbacks: WebRTCCallbacks = {}, intencional = false) {
     p2pManager.forEach((_, targetUserId) => {
-        cerrarConexionP2P(targetUserId, 'Sesión cerrada', callbacks);
+        cerrarConexionP2P(targetUserId, 'Sesión cerrada', callbacks, intencional);
     });
     finalizarLlamadaMedia(callbacks);
 }

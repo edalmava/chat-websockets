@@ -855,6 +855,17 @@ module.exports = function(wss, logger) {
                 enviarListaUsuarios(ws.sala);
             }
 
+            // Notificar a la sala que un usuario se desconectó
+            // (los peers P2P usarán esto para detectar la desconexión más rápido)
+            if (ws.sala && ws.userId) {
+                broadcastMessage({
+                    tipo: 'peer-offline',
+                    userId: ws.userId,
+                    displayName: ws.nombreUsuario,
+                    timestamp: new Date().toISOString()
+                }, ws.sala);
+            }
+
             // A-3: Limpiar registro de IP al desconectar
             if (conexionesPorIP.has(ip)) {
                 conexionesPorIP.get(ip).delete(ws);

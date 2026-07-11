@@ -37,6 +37,7 @@ export default function ChatPrivado({
   const sendP2PTyping = useChatStore((state) => state.sendP2PTyping);
   const marcarVistoP2P = useChatStore((state) => state.marcarVistoP2P);
   const terminarP2PChat = useChatStore((state) => state.terminarP2PChat);
+  const reconnectP2P = useChatStore((state) => state.reconnectP2P);
   const sendP2PFile = useChatStore((state) => state.sendP2PFile);
   const cancelarTransferenciaP2P = useChatStore((state) => state.cancelarTransferenciaP2P);
   const fileTransferProgress = useChatStore((state) => state.fileTransferProgress[targetUser.id]);
@@ -153,6 +154,7 @@ export default function ChatPrivado({
     const status = p2pConnectionStatus ? p2pConnectionStatus.toLowerCase() : '';
     if (status === 'connected' || status === 'open') return 'Conectado (P2P)';
     if (status === 'connecting' || status === 'checking') return 'Conectando WebRTC...';
+    if (status === 'reconnecting') return 'Reconectando...';
     return 'Desconectado';
   };
 
@@ -210,9 +212,11 @@ export default function ChatPrivado({
               <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold bg-indigo-600 border border-white/15">
                 {targetUser.name.substring(0, 2).toUpperCase()}
               </div>
-              {isConnected && (
+              {isConnected ? (
                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#0a0a0b] rounded-full"></div>
-              )}
+              ) : p2pConnectionStatus === 'reconnecting' ? (
+                <div className="absolute bottom-0 right-0 w-3 h-3 bg-amber-500 border-2 border-[#0a0a0b] rounded-full animate-pulse"></div>
+              ) : null}
             </div>
             <div>
               <h2 className="font-semibold text-sm text-white leading-tight font-sans">{targetUser.name}</h2>
@@ -220,6 +224,7 @@ export default function ChatPrivado({
                 esLlamadaActiva ? 'text-indigo-400' :
                 p2pTypingStatus ? 'text-indigo-400 animate-pulse' :
                 fileTransferProgress ? 'text-amber-400' :
+                p2pConnectionStatus === 'reconnecting' ? 'text-amber-400 animate-pulse' :
                 isConnected ? 'text-emerald-400' : 'text-gray-500'
               }`}>
                 {getStatusText()}
@@ -236,34 +241,50 @@ export default function ChatPrivado({
           >
             <span className="material-symbols-outlined text-xl">link_off</span>
           </button>
-          <button
-            onClick={() => iniciarLlamadaMedia(targetUser.id, 'video')}
-            disabled={!isConnected || estaEnLlamada}
-            className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
-              esLlamadaActiva && mediaCallType === 'video'
-                ? 'text-indigo-400 bg-indigo-500/15'
-                : !isConnected || estaEnLlamada
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'text-gray-400 hover:bg-white/10'
-            }`}
-            title={esLlamadaActiva ? 'En videollamada' : 'Iniciar videollamada'}
-          >
-            <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>videocam</span>
-          </button>
-          <button
-            onClick={() => iniciarLlamadaMedia(targetUser.id, 'voice')}
-            disabled={!isConnected || estaEnLlamada}
-            className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
-              esLlamadaActiva && mediaCallType === 'voice'
-                ? 'text-indigo-400 bg-indigo-500/15'
-                : !isConnected || estaEnLlamada
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'text-gray-400 hover:bg-white/10'
-            }`}
-            title={esLlamadaActiva ? 'En llamada de voz' : 'Iniciar llamada de voz'}
-          >
-            <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>call</span>
-          </button>
+
+          {isConnected ? (
+            <>
+              <button
+                onClick={() => iniciarLlamadaMedia(targetUser.id, 'video')}
+                disabled={estaEnLlamada}
+                className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
+                  esLlamadaActiva && mediaCallType === 'video'
+                    ? 'text-indigo-400 bg-indigo-500/15'
+                    : estaEnLlamada
+                    ? 'text-gray-600 cursor-not-allowed'
+                    : 'text-gray-400 hover:bg-white/10'
+                }`}
+                title={esLlamadaActiva ? 'En videollamada' : 'Iniciar videollamada'}
+              >
+                <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>videocam</span>
+              </button>
+              <button
+                onClick={() => iniciarLlamadaMedia(targetUser.id, 'voice')}
+                disabled={estaEnLlamada}
+                className={`active:scale-95 transition-transform p-2 rounded-full flex items-center justify-center ${
+                  esLlamadaActiva && mediaCallType === 'voice'
+                    ? 'text-indigo-400 bg-indigo-500/15'
+                    : estaEnLlamada
+                    ? 'text-gray-600 cursor-not-allowed'
+                    : 'text-gray-400 hover:bg-white/10'
+                }`}
+                title={esLlamadaActiva ? 'En llamada de voz' : 'Iniciar llamada de voz'}
+              >
+                <span className={`material-symbols-outlined text-xl ${esLlamadaActiva ? 'material-symbols-fill' : ''}`}>call</span>
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => reconnectP2P(targetUser.id)}
+              disabled={p2pConnectionStatus === 'connecting'}
+              className="active:scale-95 transition-transform bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold shadow-md shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className={`material-symbols-outlined text-base ${p2pConnectionStatus === 'connecting' ? 'animate-spin' : ''}`}>
+                refresh
+              </span>
+              Reconectar
+            </button>
+          )}
         </div>
       </header>
 
