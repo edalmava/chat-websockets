@@ -39,7 +39,7 @@ interface ChatState {
   mediaCallTargetUserId: string | null;
 
   // File Transfer
-  fileTransferProgress: Record<string, { sent: number; total: number; fileName: string }>; // targetUserId -> progress
+  fileTransferProgress: Record<string, { fileId: string; sent: number; total: number; fileName: string }>; // targetUserId -> progress
   fileReceivingProgress: Record<string, { received: number; total: number; fileName: string }>; // targetUserId -> progress
 
   // Silencio / Mute
@@ -112,6 +112,15 @@ function generarRoomMeta(salaNombre: string): { icon: string; description: strin
   if (n.includes('tecnología') || n.includes('tecnologia')) return { icon: 'devices', description: 'Lo último en gadgets, innovación y tendencias tecnológicas.' };
   if (n.includes('off') || n.includes('topic')) return { icon: 'forum', description: 'Temas diversos que no encajan en otras categorías.' };
   return { icon: 'forum', description: 'Sala de chat de la comunidad.' };
+}
+
+/** Revoca ObjectURLs de archivos en mensajes P2P antes de eliminarlos del store */
+function revocarUrlsArchivos(messages: Message[]) {
+  for (const msg of messages) {
+    if (msg.fileUrl && msg.fileUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(msg.fileUrl);
+    }
+  }
 }
 
 const LAST_OFFSETS_KEY_PREFIX = 'lastOffsets_';
@@ -302,7 +311,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((state) => ({
         fileTransferProgress: {
           ...state.fileTransferProgress,
-          [targetUserId]: { sent, total, fileName: '' },
+          [targetUserId]: { fileId, sent, total, fileName: state.fileTransferProgress[targetUserId]?.fileName || '' },
         },
       }));
       if (sent === total) {
@@ -678,6 +687,11 @@ export const useChatStore = create<ChatState>((set, get) => {
       const currentUserId = get().currentUser?.id;
       if (!get().session && !currentUserId) return;
 
+      // Revocar ObjectURLs de archivos P2P antes de limpiar
+      for (const msgs of Object.values(get().p2pMessages)) {
+        revocarUrlsArchivos(msgs);
+      }
+
       set({
         session: null,
         currentUser: null,
@@ -869,6 +883,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       webrtcManager.cerrarConexionP2P(targetUserId, 'Chat finalizado', getWebRTCCallbacks());
 
       set((state) => {
+        revocarUrlsArchivos(state.p2pMessages[targetUserId] || []);
         const { [targetUserId]: _msgs, ...restoMensajes } = state.p2pMessages;
         const { [targetUserId]: _conn, ...restoEstados } = state.p2pConnectionStatus;
         const { [targetUserId]: _typ, ...restoEscribiendo } = state.p2pTypingStatus;
@@ -930,15 +945,17 @@ export const useChatStore = create<ChatState>((set, get) => {
         return;
       }
 
+      const fileId = crypto.randomUUID();
+
       set((state) => ({
         fileTransferProgress: {
           ...state.fileTransferProgress,
-          [targetUserId]: { sent: 0, total: 1, fileName: file.name },
+          [targetUserId]: { fileId, sent: 0, total: 1, fileName: file.name },
         },
       }));
 
       const msg: Message = {
-        id: crypto.randomUUID(),
+        id: fileId,
         senderId: 'me',
         senderName: 'Tú',
         text: `📎 ${file.name}`,
@@ -964,7 +981,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         };
       });
 
-      const success = await webrtcManager.enviarArchivoP2P(targetUserId, file, getWebRTCCallbacks());
+      const success = await webrtcManager.enviarArchivoP2P(targetUserId, file, getWebRTCCallbacks(), fileId);
       if (!success) {
         get().addNotification('error', `Error al enviar ${file.name}.`);
       }

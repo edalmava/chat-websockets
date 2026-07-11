@@ -378,7 +378,7 @@ export default function ChatPrivado({
                 </span>
                 <button
                   type="button"
-                  onClick={() => cancelarTransferenciaP2P(targetUser.id, '')}
+                  onClick={() => fileTransferProgress && cancelarTransferenciaP2P(targetUser.id, fileTransferProgress.fileId)}
                   className="text-gray-400 hover:text-red-400 transition-colors"
                 >
                   <span className="material-symbols-outlined text-sm">close</span>

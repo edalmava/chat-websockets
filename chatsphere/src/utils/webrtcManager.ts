@@ -472,23 +472,26 @@ function recibirMensajeP2P(deUserId: string, dataRaw: string, callbacks: WebRTCC
             }
 
             case 'file-end': {
+                // Safety net: if receivingFile still exists, assembly didn't happen
+                // (shouldn't happen with ordered DC, but handle gracefully)
                 const fileId = data.payload?.fileId;
-                if (!conn.receivingFile || conn.receivingFile.fileId !== fileId) return;
-                const rf = conn.receivingFile;
-                const merged = new Uint8Array(rf.fileSize);
-                let offset = 0;
-                for (const chunk of rf.chunks) {
-                    merged.set(new Uint8Array(chunk), offset);
-                    offset += chunk.byteLength;
-                }
-                const blob = new Blob([merged], { type: rf.fileType });
-                const fileUrl = URL.createObjectURL(blob);
-                conn.receivingFile = undefined;
-                conn.messages.push({ de: conn.displayName, texto: `📎 ${rf.fileName}`, time });
-                if (callbacks.onP2PFileReceived) {
-                    callbacks.onP2PFileReceived(deUserId, conn.displayName, {
-                        fileId: rf.fileId, fileUrl, fileName: rf.fileName, fileSize: rf.fileSize, fileType: rf.fileType,
-                    });
+                if (conn.receivingFile && conn.receivingFile.fileId === fileId) {
+                    const rf = conn.receivingFile;
+                    const merged = new Uint8Array(rf.fileSize);
+                    let offset = 0;
+                    for (const chunk of rf.chunks) {
+                        merged.set(new Uint8Array(chunk), offset);
+                        offset += chunk.byteLength;
+                    }
+                    const blob = new Blob([merged], { type: rf.fileType });
+                    const fileUrl = URL.createObjectURL(blob);
+                    conn.receivingFile = undefined;
+                    conn.messages.push({ de: conn.displayName, texto: `📎 ${rf.fileName}`, time });
+                    if (callbacks.onP2PFileReceived) {
+                        callbacks.onP2PFileReceived(deUserId, conn.displayName, {
+                            fileId: rf.fileId, fileUrl, fileName: rf.fileName, fileSize: rf.fileSize, fileType: rf.fileType,
+                        });
+                    }
                 }
                 break;
             }
@@ -937,7 +940,7 @@ export function formatearTamanoArchivo(bytes: number): string {
 /**
  * Envía un archivo por DataChannel (chunking binario)
  */
-export async function enviarArchivoP2P(targetUserId: string, file: File, callbacks: WebRTCCallbacks = {}): Promise<boolean> {
+export async function enviarArchivoP2P(targetUserId: string, file: File, callbacks: WebRTCCallbacks = {}, providedFileId?: string): Promise<boolean> {
     const conn = p2pManager.get(targetUserId);
     if (!conn || !conn.dc || conn.dc.readyState !== 'open') {
         console.warn('[WebRTC] No hay DataChannel abierto para enviar archivo');
@@ -954,7 +957,7 @@ export async function enviarArchivoP2P(targetUserId: string, file: File, callbac
         return false;
     }
 
-    const fileId = crypto.randomUUID();
+    const fileId = providedFileId || crypto.randomUUID();
     const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
 
     enviarPorDC(targetUserId, 'file-meta', {
