@@ -830,6 +830,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         get().addNotification('warning', 'Ya hay una llamada en curso.');
         return;
       }
+      set({ mediaCallState: 'calling', mediaCallType: tipo, mediaCallTargetUserId: targetUserId });
       await webrtcManager.iniciarLlamadaMedia(targetUserId, tipo, getWebRTCCallbacks());
     },
 
