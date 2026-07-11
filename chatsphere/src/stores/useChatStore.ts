@@ -38,6 +38,10 @@ interface ChatState {
   mediaCallType: 'video' | 'voice' | null;
   mediaCallTargetUserId: string | null;
 
+  // File Transfer
+  fileTransferProgress: Record<string, { sent: number; total: number; fileName: string }>; // targetUserId -> progress
+  fileReceivingProgress: Record<string, { received: number; total: number; fileName: string }>; // targetUserId -> progress
+
   // Silencio / Mute
   isMuted: boolean;
   muteDurationRemaining: number;
@@ -80,6 +84,10 @@ interface ChatState {
   finalizarLlamadaMedia: () => void;
   alternarMicrofono: (activo: boolean) => void;
   alternarCamara: (activo: boolean) => void;
+
+  // File Transfer
+  sendP2PFile: (targetUserId: string, file: File) => Promise<void>;
+  cancelarTransferenciaP2P: (targetUserId: string, fileId: string) => void;
 
   // Moderación / Admin
   kickUser: (userId: string, motivo: string) => void;
@@ -256,7 +264,55 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
     onLocalStreamAdded: () => {
       // no-op
-    }
+    },
+    onP2PFileReceived: (deUserId, displayName, fileData) => {
+      const msg: Message = {
+        id: fileData.fileId,
+        senderId: deUserId,
+        senderName: displayName,
+        text: `📎 ${fileData.fileName}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSentByMe: false,
+        fileUrl: fileData.fileUrl,
+        fileName: fileData.fileName,
+        fileSize: fileData.fileSize,
+        fileType: fileData.fileType,
+      };
+      set((state) => {
+        const historialActual = state.p2pMessages[deUserId] || [];
+        const nuevosHilos = state.p2pThreads.map(t => {
+          if (t.id === deUserId) {
+            return {
+              ...t,
+              lastMessage: `📎 ${fileData.fileName}`,
+              timeAgo: 'Ahora',
+              unreadCount: state.activeP2PUserId === deUserId ? 0 : t.unreadCount + 1
+            };
+          }
+          return t;
+        });
+        return {
+          p2pMessages: { ...state.p2pMessages, [deUserId]: [...historialActual, msg] },
+          p2pThreads: nuevosHilos,
+          fileReceivingProgress: { ...state.fileReceivingProgress, [deUserId]: undefined! },
+        };
+      });
+    },
+    onFileProgress: (targetUserId, fileId, sent, total) => {
+      set((state) => ({
+        fileTransferProgress: {
+          ...state.fileTransferProgress,
+          [targetUserId]: { sent, total, fileName: '' },
+        },
+      }));
+      if (sent === total) {
+        setTimeout(() => {
+          set((state) => ({
+            fileTransferProgress: { ...state.fileTransferProgress, [targetUserId]: undefined! },
+          }));
+        }, 1000);
+      }
+    },
   });
 
   // Procesador central de mensajes del WebSocket
@@ -485,6 +541,9 @@ export const useChatStore = create<ChatState>((set, get) => {
     mediaCallState: 'idle',
     mediaCallType: null,
     mediaCallTargetUserId: null,
+
+    fileTransferProgress: {},
+    fileReceivingProgress: {},
 
     isMuted: false,
     muteDurationRemaining: 0,
@@ -859,6 +918,63 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     alternarCamara: (activo) => {
       webrtcManager.alternarCamara(activo);
+    },
+
+    sendP2PFile: async (targetUserId, file) => {
+      if (!webrtcManager.esTipoArchivoPermitido(file.type)) {
+        get().addNotification('error', 'Tipo de archivo no permitido.');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        get().addNotification('error', 'El archivo excede el límite de 50MB.');
+        return;
+      }
+
+      set((state) => ({
+        fileTransferProgress: {
+          ...state.fileTransferProgress,
+          [targetUserId]: { sent: 0, total: 1, fileName: file.name },
+        },
+      }));
+
+      const msg: Message = {
+        id: crypto.randomUUID(),
+        senderId: 'me',
+        senderName: 'Tú',
+        text: `📎 ${file.name}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSentByMe: true,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+      };
+
+      if (file.type.startsWith('image/')) {
+        msg.fileUrl = URL.createObjectURL(file);
+      }
+
+      set((state) => {
+        const historial = state.p2pMessages[targetUserId] || [];
+        const nuevosHilos = state.p2pThreads.map(t =>
+          t.id === targetUserId ? { ...t, lastMessage: `📎 ${file.name}`, timeAgo: 'Ahora' } : t
+        );
+        return {
+          p2pMessages: { ...state.p2pMessages, [targetUserId]: [...historial, msg] },
+          p2pThreads: nuevosHilos,
+        };
+      });
+
+      const success = await webrtcManager.enviarArchivoP2P(targetUserId, file, getWebRTCCallbacks());
+      if (!success) {
+        get().addNotification('error', `Error al enviar ${file.name}.`);
+      }
+    },
+
+    cancelarTransferenciaP2P: (targetUserId, fileId) => {
+      webrtcManager.cancelarTransferencia(targetUserId, fileId);
+      set((state) => ({
+        fileTransferProgress: { ...state.fileTransferProgress, [targetUserId]: undefined! },
+      }));
     },
 
     marcarVistoP2P: (targetUserId) => {

@@ -11,6 +11,15 @@ export interface P2PConnection {
     status: string;
     candidateBuffer: any[];
     typing?: boolean;
+    receivingFile?: {
+        fileId: string;
+        fileName: string;
+        fileSize: number;
+        fileType: string;
+        chunkCount: number;
+        chunks: ArrayBuffer[];
+        receivedCount: number;
+    };
 }
 
 export interface WebRTCCallbacks {
@@ -29,12 +38,30 @@ export interface WebRTCCallbacks {
     onMediaCallEnded?: (deUserId: string, reason: string) => void;
     onRemoteStreamAdded?: (stream: MediaStream) => void;
     onLocalStreamAdded?: (stream: MediaStream) => void;
+    onP2PFileReceived?: (deUserId: string, displayName: string, fileData: {
+        fileId: string; fileUrl: string; fileName: string; fileSize: number; fileType: string;
+    }) => void;
+    onFileProgress?: (targetUserId: string, fileId: string, sent: number, total: number) => void;
 }
 
 const p2pManager = new Map<string, P2PConnection>();
 const MAX_ICE_CANDIDATES = 50; // Límite de candidatos ICE para evitar DoS por memoria
 const MAX_P2P_CONNECTIONS = 10; // Máximo de conexiones P2P simultáneas por cliente
 const MAX_P2P_MESSAGE_LENGTH = 5000; // Máximo de caracteres por mensaje P2P
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const CHUNK_SIZE = 16 * 1024; // 16KB por chunk
+
+const ALLOWED_FILE_TYPES = new Set([
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/zip', 'application/x-zip-compressed',
+]);
 let activeP2PUser: string | null = null; // targetUserId actual de la ventana activa
 let p2pEstaEscribiendo = false;
 let p2pTypingTimeout: NodeJS.Timeout | null = null;
@@ -139,6 +166,7 @@ export async function iniciarConexionP2P(targetUserId: string, displayName: stri
     configurarPC(targetUserId, pc, callbacks);
     
     const dc = pc.createDataChannel('chat');
+    dc.binaryType = 'arraybuffer';
     connection.dc = dc;
     configurarDC(targetUserId, dc, callbacks);
 
@@ -186,6 +214,7 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
         const conn = p2pManager.get(targetUserId);
         if (conn) {
             conn.dc = e.channel;
+            e.channel.binaryType = 'arraybuffer';
             configurarDC(targetUserId, e.channel, callbacks);
         }
     };
@@ -221,7 +250,13 @@ function configurarDC(targetUserId: string, dc: RTCDataChannel, callbacks: WebRT
         cerrarConexionP2P(targetUserId, 'Canal de datos cerrado', callbacks);
     };
 
-    dc.onmessage = (e) => recibirMensajeP2P(targetUserId, e.data, callbacks);
+    dc.onmessage = (e) => {
+        if (typeof e.data === 'string') {
+            recibirMensajeP2P(targetUserId, e.data, callbacks);
+        } else if (e.data instanceof ArrayBuffer) {
+            recibirChunkArchivo(targetUserId, e.data, callbacks);
+        }
+    };
 }
 
 /**
@@ -414,6 +449,57 @@ function recibirMensajeP2P(deUserId: string, dataRaw: string, callbacks: WebRTCC
             case 'media-end':
                 manejarMensajeMedia(deUserId, data, callbacks);
                 break;
+
+            // File transfer messages (via DataChannel)
+            case 'file-meta': {
+                const meta = data.payload;
+                if (!meta?.fileId || !meta?.fileName || !meta?.fileSize || !meta?.fileType || !meta?.chunkCount) return;
+                if (meta.fileSize > MAX_FILE_SIZE) {
+                    console.warn(`[WebRTC] Archivo de ${conn.displayName} excede el límite de ${MAX_FILE_SIZE} bytes`);
+                    enviarPorDC(deUserId, 'file-cancel', { fileId: meta.fileId });
+                    return;
+                }
+                conn.receivingFile = {
+                    fileId: meta.fileId,
+                    fileName: meta.fileName,
+                    fileSize: meta.fileSize,
+                    fileType: meta.fileType,
+                    chunkCount: meta.chunkCount,
+                    chunks: [],
+                    receivedCount: 0,
+                };
+                break;
+            }
+
+            case 'file-end': {
+                const fileId = data.payload?.fileId;
+                if (!conn.receivingFile || conn.receivingFile.fileId !== fileId) return;
+                const rf = conn.receivingFile;
+                const merged = new Uint8Array(rf.fileSize);
+                let offset = 0;
+                for (const chunk of rf.chunks) {
+                    merged.set(new Uint8Array(chunk), offset);
+                    offset += chunk.byteLength;
+                }
+                const blob = new Blob([merged], { type: rf.fileType });
+                const fileUrl = URL.createObjectURL(blob);
+                conn.receivingFile = undefined;
+                conn.messages.push({ de: conn.displayName, texto: `📎 ${rf.fileName}`, time });
+                if (callbacks.onP2PFileReceived) {
+                    callbacks.onP2PFileReceived(deUserId, conn.displayName, {
+                        fileId: rf.fileId, fileUrl, fileName: rf.fileName, fileSize: rf.fileSize, fileType: rf.fileType,
+                    });
+                }
+                break;
+            }
+
+            case 'file-cancel': {
+                const cancelFileId = data.payload?.fileId;
+                if (conn.receivingFile?.fileId === cancelFileId) {
+                    conn.receivingFile = undefined;
+                }
+                break;
+            }
         }
     } catch (e) {
         console.error('[WebRTC] Error al procesar mensaje P2P de entrada:', e);
@@ -814,4 +900,141 @@ export function manejarMensajeMedia(deUserId: string, data: any, callbacks: WebR
             break;
         }
     }
+}
+
+// ===================== FILE TRANSFER (via DataChannel) =====================
+
+/**
+ * Valida si un tipo MIME está permitido para transferencia
+ */
+export function esTipoArchivoPermitido(mimeType: string): boolean {
+    return ALLOWED_FILE_TYPES.has(mimeType);
+}
+
+/**
+ * Retorna el ícono Material Symbol para un tipo de archivo
+ */
+export function obtenerIconoArchivo(mimeType?: string): string {
+    if (!mimeType) return 'description';
+    if (mimeType.includes('pdf')) return 'picture_as_pdf';
+    if (mimeType.includes('word') || mimeType.includes('document')) return 'article';
+    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return 'table_chart';
+    if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return 'slideshow';
+    if (mimeType.includes('zip')) return 'folder_zip';
+    if (mimeType.startsWith('image/')) return 'image';
+    return 'description';
+}
+
+/**
+ * Formatea tamaño de archivo a string legible
+ */
+export function formatearTamanoArchivo(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Envía un archivo por DataChannel (chunking binario)
+ */
+export async function enviarArchivoP2P(targetUserId: string, file: File, callbacks: WebRTCCallbacks = {}): Promise<boolean> {
+    const conn = p2pManager.get(targetUserId);
+    if (!conn || !conn.dc || conn.dc.readyState !== 'open') {
+        console.warn('[WebRTC] No hay DataChannel abierto para enviar archivo');
+        return false;
+    }
+
+    if (!esTipoArchivoPermitido(file.type)) {
+        console.warn(`[WebRTC] Tipo de archivo no permitido: ${file.type}`);
+        return false;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+        console.warn(`[WebRTC] Archivo excede el límite de ${MAX_FILE_SIZE} bytes`);
+        return false;
+    }
+
+    const fileId = crypto.randomUUID();
+    const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
+
+    enviarPorDC(targetUserId, 'file-meta', {
+        fileId, fileName: file.name, fileSize: file.size, fileType: file.type, chunkCount,
+    });
+
+    try {
+        const buffer = await file.arrayBuffer();
+        for (let i = 0; i < chunkCount; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, buffer.byteLength);
+            const chunk = buffer.slice(start, end);
+            if (!enviarChunkPorDC(targetUserId, chunk)) {
+                console.warn(`[WebRTC] Error al enviar chunk ${i}/${chunkCount}`);
+                cancelarTransferencia(targetUserId, fileId);
+                return false;
+            }
+            if (callbacks.onFileProgress) {
+                callbacks.onFileProgress(targetUserId, fileId, i + 1, chunkCount);
+            }
+        }
+    } catch (err) {
+        console.error('[WebRTC] Error al enviar archivo:', err);
+        cancelarTransferencia(targetUserId, fileId);
+        return false;
+    }
+
+    enviarPorDC(targetUserId, 'file-end', { fileId });
+    return true;
+}
+
+/**
+ * Envía un chunk binario raw por DataChannel
+ */
+function enviarChunkPorDC(targetUserId: string, chunk: ArrayBuffer): boolean {
+    const conn = p2pManager.get(targetUserId);
+    if (conn && conn.dc && conn.dc.readyState === 'open') {
+        conn.dc.send(chunk);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Recibe un chunk binario entrante por DataChannel
+ */
+function recibirChunkArchivo(targetUserId: string, data: ArrayBuffer, callbacks: WebRTCCallbacks) {
+    const conn = p2pManager.get(targetUserId);
+    if (!conn || !conn.receivingFile) return;
+
+    conn.receivingFile.chunks.push(data);
+    conn.receivingFile.receivedCount++;
+
+    if (conn.receivingFile.receivedCount === conn.receivingFile.chunkCount) {
+        const rf = conn.receivingFile;
+        const merged = new Uint8Array(rf.fileSize);
+        let offset = 0;
+        for (const chunk of rf.chunks) {
+            merged.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+        }
+        const blob = new Blob([merged], { type: rf.fileType });
+        const fileUrl = URL.createObjectURL(blob);
+        conn.receivingFile = undefined;
+        conn.messages.push({ de: conn.displayName, texto: `📎 ${rf.fileName}`, time: new Date() });
+        if (callbacks.onP2PFileReceived) {
+            callbacks.onP2PFileReceived(targetUserId, conn.displayName, {
+                fileId: rf.fileId, fileUrl, fileName: rf.fileName, fileSize: rf.fileSize, fileType: rf.fileType,
+            });
+        }
+    }
+}
+
+/**
+ * Envía una cancelación de transferencia de archivo
+ */
+export function cancelarTransferencia(targetUserId: string, fileId: string) {
+    const conn = p2pManager.get(targetUserId);
+    if (conn?.receivingFile?.fileId === fileId) {
+        conn.receivingFile = undefined;
+    }
+    enviarPorDC(targetUserId, 'file-cancel', { fileId });
 }

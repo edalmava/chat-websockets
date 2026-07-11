@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useChatStore } from './stores/useChatStore';
 import Auth from './components/Auth';
@@ -7,6 +7,7 @@ import ChatPrivado from './components/ChatPrivado';
 import ChatSala from './components/ChatSala';
 import ListaSalas from './components/ListaSalas';
 import LlamadaOverlay from './components/LlamadaOverlay';
+import ImageLightbox from './components/ImageLightbox';
 
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
@@ -40,6 +41,9 @@ export default function App() {
   const mediaCallState = useChatStore((state) => state.mediaCallState);
   const aceptarLlamadaMedia = useChatStore((state) => state.aceptarLlamadaMedia);
   const rechazarLlamadaMedia = useChatStore((state) => state.rechazarLlamadaMedia);
+
+  // Image lightbox
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   // Inicializar autenticación y sockets — solo una vez al montar
   // Usamos getState() para evitar que la referencia de la función
@@ -217,6 +221,7 @@ export default function App() {
                 closeP2PChat(activeP2PUserId);
                 navigateTo('mensajes-privados', 'push_back');
               }}
+              onOpenLightbox={setLightboxImage}
             />
           )}
 
@@ -247,6 +252,9 @@ export default function App() {
 
       {/* Media Call Overlay (sobre cualquier pantalla) */}
       {mediaCallState !== 'idle' && <LlamadaOverlay />}
+
+      {/* Image Lightbox (sobre todo) */}
+      {lightboxImage && <ImageLightbox imageUrl={lightboxImage} onClose={() => setLightboxImage(null)} />}
     </div>
   );
 }

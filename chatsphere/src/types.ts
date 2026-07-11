@@ -24,9 +24,11 @@ export interface Message {
   timestamp: string;
   isSentByMe: boolean;
   status?: 'sending' | 'sent' | 'read';
-  docName?: string;
-  docSize?: string;
   clientOffset?: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
 }
 
 export interface ChatThread {

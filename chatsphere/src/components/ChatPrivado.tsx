@@ -1,12 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Message, ChatThread } from '../types';
 import { useChatStore } from '../stores/useChatStore';
+import * as webrtcManager from '../utils/webrtcManager';
+
+const ALLOWED_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip',
+]);
 
 interface ChatPrivadoProps {
   onBack: () => void;
   messages: Message[];
   targetUser: ChatThread;
   onSendMessage: (text: string) => void;
+  onOpenLightbox?: (imageUrl: string) => void;
 }
 
 export default function ChatPrivado({
@@ -14,18 +21,26 @@ export default function ChatPrivado({
   messages,
   targetUser,
   onSendMessage,
+  onOpenLightbox,
 }: ChatPrivadoProps) {
   const [typedMessage, setTypedMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // File preview state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+
   // Obtener estados P2P del store de Zustand
   const p2pConnectionStatus = useChatStore((state) => state.p2pConnectionStatus[targetUser.id]);
   const p2pTypingStatus = useChatStore((state) => state.p2pTypingStatus[targetUser.id]);
   const sendP2PTyping = useChatStore((state) => state.sendP2PTyping);
   const marcarVistoP2P = useChatStore((state) => state.marcarVistoP2P);
   const terminarP2PChat = useChatStore((state) => state.terminarP2PChat);
-  const addNotification = useChatStore((state) => state.addNotification);
-  
+  const sendP2PFile = useChatStore((state) => state.sendP2PFile);
+  const cancelarTransferenciaP2P = useChatStore((state) => state.cancelarTransferenciaP2P);
+  const fileTransferProgress = useChatStore((state) => state.fileTransferProgress[targetUser.id]);
+
   // Media call state
   const mediaCallState = useChatStore((state) => state.mediaCallState);
   const mediaCallType = useChatStore((state) => state.mediaCallType);
@@ -37,30 +52,26 @@ export default function ChatPrivado({
   const [escribiendoLocal, setEscribiendoLocal] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Auto-scroll al final del chat
   const scrollToBottom = (behavior: 'auto' | 'smooth' = 'auto') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
   };
 
-  // Al montar: scroll inicial + marcar todos los mensajes como vistos
   useEffect(() => {
     scrollToBottom('auto');
     marcarVistoP2P(targetUser.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Solo al montar
+  }, []);
 
-  // Scroll suave al llegar nuevos mensajes — SIN marcar visto aquí
-  // (el backend ya dispara el callback onP2PMessageReceived que lo gestiona)
   useEffect(() => {
     scrollToBottom('smooth');
-  }, [messages]); // Solo depende de messages, no actualiza estado
+  }, [messages]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!typedMessage.trim()) return;
     onSendMessage(typedMessage.trim());
     setTypedMessage('');
-    
+
     if (escribiendoLocal) {
       setEscribiendoLocal(false);
       sendP2PTyping(targetUser.id, false);
@@ -70,8 +81,7 @@ export default function ChatPrivado({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTypedMessage(e.target.value);
-    
-    // Gestión del typing indicator P2P
+
     if (!escribiendoLocal) {
       setEscribiendoLocal(true);
       sendP2PTyping(targetUser.id, true);
@@ -84,22 +94,62 @@ export default function ChatPrivado({
     }, 3000);
   };
 
-  // Limpiar el timeout al desmontar
   useEffect(() => {
     return () => {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     };
-  }, []);
+  }, [filePreviewUrl]);
 
-  // Formatear estado de conexión
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      useChatStore.getState().addNotification('error', 'Tipo de archivo no permitido.');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      useChatStore.getState().addNotification('error', 'El archivo excede el límite de 50MB.');
+      return;
+    }
+
+    setSelectedFile(file);
+    if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
+    if (file.type.startsWith('image/')) {
+      setFilePreviewUrl(URL.createObjectURL(file));
+    } else {
+      setFilePreviewUrl(null);
+    }
+  }, [filePreviewUrl]);
+
+  const handleSendFile = async () => {
+    if (!selectedFile) return;
+    const file = selectedFile;
+    setSelectedFile(null);
+    if (filePreviewUrl) { URL.revokeObjectURL(filePreviewUrl); setFilePreviewUrl(null); }
+    await sendP2PFile(targetUser.id, file);
+  };
+
+  const handleCancelFile = () => {
+    setSelectedFile(null);
+    if (filePreviewUrl) { URL.revokeObjectURL(filePreviewUrl); setFilePreviewUrl(null); }
+  };
+
   const getStatusText = () => {
     if (esLlamadaActiva) {
       if (mediaCallType === 'video') return 'En videollamada';
       return 'En llamada de voz';
     }
     if (mediaCallTargetUserId === targetUser.id && mediaCallState === 'ringing') return 'Llamada entrante...';
+    if (fileTransferProgress) {
+      const pct = Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100);
+      return `Enviando archivo... ${pct}%`;
+    }
     if (p2pTypingStatus) return 'escribiendo...';
-    
+
     const status = p2pConnectionStatus ? p2pConnectionStatus.toLowerCase() : '';
     if (status === 'connected' || status === 'open') return 'Conectado (P2P)';
     if (status === 'connecting' || status === 'checking') return 'Conectando WebRTC...';
@@ -108,9 +158,44 @@ export default function ChatPrivado({
 
   const isConnected = p2pConnectionStatus === 'connected' || p2pConnectionStatus === 'open';
 
+  const renderFileContent = (msg: Message, isMine: boolean) => {
+    if (!msg.fileUrl) return null;
+
+    if (msg.fileType?.startsWith('image/')) {
+      return (
+        <img
+          src={msg.fileUrl}
+          alt={msg.fileName}
+          className="max-w-full max-h-[300px] rounded-lg object-cover cursor-pointer active:scale-[0.98] transition-transform"
+          onClick={() => onOpenLightbox?.(msg.fileUrl!)}
+          loading="lazy"
+        />
+      );
+    }
+
+    return (
+      <a
+        href={msg.fileUrl}
+        download={msg.fileName}
+        className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+          isMine ? 'bg-white/10 hover:bg-white/15' : 'bg-white/5 hover:bg-white/10'
+        }`}
+      >
+        <span className="material-symbols-outlined text-3xl text-indigo-400 shrink-0">
+          {webrtcManager.obtenerIconoArchivo(msg.fileType)}
+        </span>
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm text-white truncate">{msg.fileName}</span>
+          <span className="text-[10px] text-gray-400">{webrtcManager.formatearTamanoArchivo(msg.fileSize || 0)}</span>
+        </div>
+        <span className="material-symbols-outlined text-lg text-gray-400 shrink-0 ml-auto">download</span>
+      </a>
+    );
+  };
+
   return (
     <div className="fixed inset-0 bg-[#0a0a0b] flex flex-col h-screen overflow-hidden">
-      {/* Target header bar */}
+      {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 h-16 glass-header flex justify-between items-center px-4 select-none shadow-sm">
         <div className="flex items-center gap-3">
           <button
@@ -134,6 +219,7 @@ export default function ChatPrivado({
               <p className={`text-[10px] font-bold font-sans mt-0.5 ${
                 esLlamadaActiva ? 'text-indigo-400' :
                 p2pTypingStatus ? 'text-indigo-400 animate-pulse' :
+                fileTransferProgress ? 'text-amber-400' :
                 isConnected ? 'text-emerald-400' : 'text-gray-500'
               }`}>
                 {getStatusText()}
@@ -142,7 +228,6 @@ export default function ChatPrivado({
           </div>
         </div>
 
-        {/* Right Buttons */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => terminarP2PChat(targetUser.id)}
@@ -182,24 +267,27 @@ export default function ChatPrivado({
         </div>
       </header>
 
-      {/* Main Messages Drawer Scroll Container */}
+      {/* Messages */}
       <main className="flex-1 overflow-y-auto px-4 pt-18 pb-28 custom-scrollbar">
-        {/* Timestamp Separator */}
         <div className="text-center my-6 select-none">
           <span className="text-[11px] font-bold bg-[#111113] text-gray-500 px-4 py-1.5 rounded-full uppercase tracking-wider border border-white/10 shadow-sm font-sans">
             Hoy
           </span>
         </div>
 
-        {/* Messages Stream */}
         <div className="flex flex-col gap-3">
           {messages.map((msg) => {
+            const hasFile = !!msg.fileUrl;
             if (msg.isSentByMe) {
               return (
                 <div key={msg.id} className="flex flex-col gap-1 max-w-[85%] self-end items-end mt-1">
                   <div className="flex items-end gap-2 flex-row-reverse">
-                    <div className="bg-indigo-600 shadow-md shadow-indigo-600/10 px-4 py-2.5 rounded-2xl rounded-tr-xs text-white select-text">
-                      <p className="text-sm font-sans whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                    <div className={`shadow-md shadow-indigo-600/10 px-4 py-2.5 rounded-2xl rounded-tr-xs text-white select-text ${
+                      hasFile ? 'bg-indigo-600/80 p-2' : 'bg-indigo-600'
+                    }`}>
+                      {hasFile ? renderFileContent(msg, true) : (
+                        <p className="text-sm font-sans whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                      )}
                     </div>
                     <div className="flex flex-col items-end shrink-0 select-none">
                       <span className="text-[9px] text-gray-500">{msg.timestamp}</span>
@@ -216,8 +304,12 @@ export default function ChatPrivado({
               return (
                 <div key={msg.id} className="flex flex-col gap-1 max-w-[85%] self-start items-start mt-1">
                   <div className="flex items-end gap-2">
-                    <div className="glass px-4 py-2.5 rounded-2xl rounded-tl-xs text-gray-100 select-text">
-                      <p className="text-sm font-sans whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                    <div className={`glass px-4 py-2.5 rounded-2xl rounded-tl-xs text-gray-100 select-text ${
+                      hasFile ? 'p-2' : ''
+                    }`}>
+                      {hasFile ? renderFileContent(msg, false) : (
+                        <p className="text-sm font-sans whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                      )}
                     </div>
                     <span className="text-[9px] text-gray-500 pb-1 select-none">{msg.timestamp}</span>
                   </div>
@@ -226,7 +318,6 @@ export default function ChatPrivado({
             }
           })}
 
-          {/* Typing indicator widget */}
           {p2pTypingStatus && (
             <div className="flex items-center gap-2 mt-2 self-start transition-opacity duration-300 select-none">
               <div className="glass px-4 py-2.5 rounded-full flex gap-1 items-center">
@@ -238,17 +329,84 @@ export default function ChatPrivado({
             </div>
           )}
 
-          {/* Dummy element used as scrolling anchor */}
           <div ref={messagesEndRef} />
         </div>
       </main>
 
-      {/* Persistent typing field bar */}
+      {/* Input bar */}
       <div className="fixed bottom-0 left-0 right-0 glass border-t border-white/5 px-4 pt-3 pb-8 z-50">
+        {/* File preview card */}
+        {selectedFile && (
+          <div className="mb-2 flex items-center gap-3 bg-[#111113] rounded-xl px-3 py-2 border border-white/10">
+            {filePreviewUrl ? (
+              <img src={filePreviewUrl} alt="Preview" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+            ) : (
+              <span className="material-symbols-outlined text-2xl text-indigo-400 shrink-0">
+                {webrtcManager.obtenerIconoArchivo(selectedFile.type)}
+              </span>
+            )}
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-xs text-white truncate">{selectedFile.name}</span>
+              <span className="text-[10px] text-gray-400">{webrtcManager.formatearTamanoArchivo(selectedFile.size)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelFile}
+              className="text-gray-400 hover:text-red-400 p-1 rounded-full transition-colors shrink-0"
+            >
+              <span className="material-symbols-outlined text-lg">close</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSendFile}
+              disabled={!isConnected}
+              className="w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white shrink-0 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-lg">send</span>
+            </button>
+          </div>
+        )}
+
+        {/* Sending progress bar */}
+        {fileTransferProgress && (
+          <div className="mb-2 px-1">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-gray-400 truncate max-w-[200px]">Enviando {fileTransferProgress.fileName}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-400">
+                  {Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => cancelarTransferenciaP2P(targetUser.id, '')}
+                  className="text-gray-400 hover:text-red-400 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            </div>
+            <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                style={{ width: `${(fileTransferProgress.sent / fileTransferProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSend} className="flex items-center gap-2.5">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
+            onChange={handleFileSelect}
+          />
           <button
             type="button"
-            className="text-gray-400 hover:bg-white/10 p-2.5 rounded-full transition-colors active:scale-95 flex items-center justify-center shrink-0"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!isConnected}
+            className="text-gray-400 hover:bg-white/10 p-2.5 rounded-full transition-colors active:scale-95 flex items-center justify-center shrink-0 disabled:text-gray-600 disabled:cursor-not-allowed"
           >
             <span className="material-symbols-outlined text-xl">add</span>
           </button>
