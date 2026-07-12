@@ -53,23 +53,49 @@ export default function LlamadaOverlay() {
   // Escuchar nuevos streams remotos (ontrack puede dispararse después del render)
   useEffect(() => {
     if (!isConnected) return;
+    let detected = false;
     const checkInterval = setInterval(() => {
+      if (detected) { clearInterval(checkInterval); return; }
       const remote = webrtcManager.obtenerStreamRemoto();
       if (remote && remoteVideoRef.current && remoteVideoRef.current.srcObject !== remote) {
         remoteVideoRef.current.srcObject = remote;
         remoteVideoRef.current.play().catch(() => {});
+        detected = true;
       }
       if (remote && remoteAudioRef.current && remoteAudioRef.current.srcObject !== remote) {
         remoteAudioRef.current.srcObject = remote;
         remoteAudioRef.current.play().catch(() => {});
+        detected = true;
       }
       const local = webrtcManager.obtenerStreamLocal();
       if (local && localVideoRef.current && localVideoRef.current.srcObject !== local) {
         localVideoRef.current.srcObject = local;
         localVideoRef.current.play().catch(() => {});
+        detected = true;
       }
     }, 500);
     return () => clearInterval(checkInterval);
+  }, [isConnected]);
+
+  // Cleanup srcObject al desmontar o cambiar de estado
+  useEffect(() => {
+    return () => {
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+      if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    };
+  }, [mediaCallState]);
+
+  // Sincronizar mic/cam con el estado real de los tracks al conectar
+  useEffect(() => {
+    if (!isConnected) return;
+    const local = webrtcManager.obtenerStreamLocal();
+    if (local) {
+      const audioTrack = local.getAudioTracks()[0];
+      const videoTrack = local.getVideoTracks()[0];
+      if (audioTrack) setMicActivo(audioTrack.enabled);
+      if (videoTrack) setCamActivo(videoTrack.enabled);
+    }
   }, [isConnected]);
 
   // Timer de duración
@@ -91,15 +117,23 @@ export default function LlamadaOverlay() {
   }, [duracion]);
 
   const toggleMic = () => {
-    const nuevo = !micActivo;
-    setMicActivo(nuevo);
-    alternarMicrofono(nuevo);
+    const local = webrtcManager.obtenerStreamLocal();
+    const audioTrack = local?.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setMicActivo(audioTrack.enabled);
+      alternarMicrofono(audioTrack.enabled);
+    }
   };
 
   const toggleCam = () => {
-    const nuevo = !camActivo;
-    setCamActivo(nuevo);
-    alternarCamara(nuevo);
+    const local = webrtcManager.obtenerStreamLocal();
+    const videoTrack = local?.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setCamActivo(videoTrack.enabled);
+      alternarCamara(videoTrack.enabled);
+    }
   };
 
   if (mediaCallState === 'idle') return null;
@@ -191,7 +225,7 @@ export default function LlamadaOverlay() {
           </>
         )}
 
-        {(isRinging || isCalling) && (
+        {isCalling && (
           <button
             onClick={isRinging ? rechazarLlamadaMedia : finalizarLlamadaMedia}
             className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow-lg active:scale-90 transition-all"

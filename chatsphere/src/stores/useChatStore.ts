@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Session } from '@supabase/supabase-js';
-import { Screen, Message, Room, ChatThread, RoomUser } from '../types';
+import { Screen, Message, Room, ChatThread, RoomUser, CallState } from '../types';
 import * as supabaseClient from '../utils/supabaseClient';
 import * as wsManager from '../utils/wsManager';
 import * as webrtcManager from '../utils/webrtcManager';
@@ -35,7 +35,7 @@ interface ChatState {
   previousP2PConnections: Record<string, string>; // targetUserId -> displayName (para restaurar tras reconexión WS)
   
   // Media Call (video/voice)
-  mediaCallState: 'idle' | 'ringing' | 'calling' | 'connected';
+  mediaCallState: CallState;
   mediaCallType: 'video' | 'voice' | null;
   mediaCallTargetUserId: string | null;
 
@@ -654,23 +654,21 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
         },
         onClose: (event) => {
-          // Guardar conexiones P2P existentes antes de procesar la desconexión
-          const p2pConns = webrtcManager.obtenerP2PConnections();
-          const previousConnections: Record<string, string> = {};
-          p2pConns.forEach((conn, userId) => {
-            previousConnections[userId] = conn.displayName;
-          });
-
-          // Para códigos fatales (4001, 4002, 4003) → destruir todo P2P
-          // Para otros → marcar como reconectando sin destruir
+          // Para códigos fatales (4001, 4002, 4003) → destruir todo sin guardar
           if (event.code === 4001 || event.code === 4002 || event.code === 4003) {
             webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks(), true);
             webrtcManager.cancelarTodasLasReconexiones();
+            set({ wsStatus: 'disconnected', wsInitializing: false, previousP2PConnections: {} });
           } else {
+            // Para otros códigos → guardar conexiones y marcar como reconectando
+            const p2pConns = webrtcManager.obtenerP2PConnections();
+            const previousConnections: Record<string, string> = {};
+            p2pConns.forEach((conn, userId) => {
+              previousConnections[userId] = conn.displayName;
+            });
             webrtcManager.marcarTodasComoReconnecting(getWebRTCCallbacks());
+            set({ wsStatus: 'disconnected', wsInitializing: false, previousP2PConnections: previousConnections });
           }
-
-          set({ wsStatus: 'disconnected', wsInitializing: false, previousP2PConnections: previousConnections });
 
           if (event.code === 4001) {
             get().addNotification('error', 'Sesión expirada o token inválido.');
@@ -819,7 +817,7 @@ export const useChatStore = create<ChatState>((set, get) => {
           // Reconstruir mensajes desde webrtcManager (sin metadata de archivos)
           const conn = webrtcManager.obtenerP2PConnections().get(targetUserId);
           const msgsFromWM = conn ? conn.messages.map(m => ({
-            id: String(Math.random()),
+          id: crypto.randomUUID(),
             senderId: m.de === 'Tú' ? 'me' : targetUserId,
             senderName: m.de,
             text: m.texto,
@@ -868,7 +866,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       const msg = webrtcManager.enviarMensajeChatP2P(targetUserId, text);
       if (msg) {
         const msgObj: Message = {
-          id: String(Math.random()),
+          id: crypto.randomUUID(),
           senderId: 'me',
           senderName: 'Tú',
           text,

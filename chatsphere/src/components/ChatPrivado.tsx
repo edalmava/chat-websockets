@@ -98,6 +98,11 @@ export default function ChatPrivado({
   useEffect(() => {
     return () => {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
       if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     };
   }, [filePreviewUrl]);
@@ -146,7 +151,9 @@ export default function ChatPrivado({
     }
     if (mediaCallTargetUserId === targetUser.id && mediaCallState === 'ringing') return 'Llamada entrante...';
     if (fileTransferProgress) {
-      const pct = Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100);
+      const pct = fileTransferProgress.total > 0
+        ? Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100)
+        : 0;
       return `Enviando archivo... ${pct}%`;
     }
     if (p2pTypingStatus) return 'escribiendo...';
@@ -276,10 +283,10 @@ export default function ChatPrivado({
           ) : (
             <button
               onClick={() => reconnectP2P(targetUser.id)}
-              disabled={p2pConnectionStatus === 'connecting'}
+              disabled={p2pConnectionStatus === 'connecting' || p2pConnectionStatus === 'reconnecting'}
               className="active:scale-95 transition-transform bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold shadow-md shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className={`material-symbols-outlined text-base ${p2pConnectionStatus === 'connecting' ? 'animate-spin' : ''}`}>
+              <span className={`material-symbols-outlined text-base ${p2pConnectionStatus === 'connecting' || p2pConnectionStatus === 'reconnecting' ? 'animate-spin' : ''}`}>
                 refresh
               </span>
               Reconectar
@@ -389,13 +396,17 @@ export default function ChatPrivado({
         )}
 
         {/* Sending progress bar */}
-        {fileTransferProgress && (
+        {fileTransferProgress && (() => {
+          const porcentaje = fileTransferProgress.total > 0
+            ? Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100)
+            : 0;
+          return (
           <div className="mb-2 px-1">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] text-gray-400 truncate max-w-[200px]">Enviando {fileTransferProgress.fileName}</span>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-gray-400">
-                  {Math.round((fileTransferProgress.sent / fileTransferProgress.total) * 100)}%
+                  {porcentaje}%
                 </span>
                 <button
                   type="button"
@@ -409,11 +420,12 @@ export default function ChatPrivado({
             <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
               <div
                 className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-                style={{ width: `${(fileTransferProgress.sent / fileTransferProgress.total) * 100}%` }}
+                style={{ width: `${porcentaje}%` }}
               />
             </div>
           </div>
-        )}
+          );
+        })()}
 
         <form onSubmit={handleSend} className="flex items-center gap-2.5">
           <input

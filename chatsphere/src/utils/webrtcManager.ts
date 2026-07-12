@@ -2,6 +2,9 @@
  * GESTOR DE CONEXIONES P2P (WEBRTC - TypeScript)
  */
 
+import type { CallState } from '../types';
+export type { CallState };
+
 export interface P2PConnection {
     pc: RTCPeerConnection;
     dc: RTCDataChannel | null;
@@ -12,6 +15,7 @@ export interface P2PConnection {
     candidateBuffer: any[];
     connectionId: number;
     typing?: boolean;
+    pendingOffer?: RTCSessionDescription;
     receivingFile?: {
         fileId: string;
         fileName: string;
@@ -84,7 +88,6 @@ let iceConfigReady: Promise<RTCConfiguration> | null = null;
 let resolveIceConfig: ((value: RTCConfiguration) => void) | null = null;
 
 // --- Media Call State ---
-export type CallState = 'idle' | 'ringing' | 'calling' | 'connected' | 'ended';
 let mediaCallState: CallState = 'idle';
 let mediaCallType: 'video' | 'voice' | null = null;
 let mediaTargetUserId: string | null = null;
@@ -857,7 +860,7 @@ export async function aceptarLlamadaMedia(targetUserId: string, callbacks: WebRT
 
     detenerTonoLlamada();
 
-    const pendingOffer = (conn as any)._pendingOffer;
+    const pendingOffer = conn.pendingOffer;
     if (!pendingOffer) {
         console.warn('[WebRTC] No hay oferta pendiente para aceptar');
         return;
@@ -865,7 +868,7 @@ export async function aceptarLlamadaMedia(targetUserId: string, callbacks: WebRT
 
     try {
         await conn.pc.setRemoteDescription(pendingOffer);
-        delete (conn as any)._pendingOffer;
+        delete conn.pendingOffer;
 
         const tipo = mediaCallType || 'voice';
         const constraints: MediaStreamConstraints = tipo === 'video'
@@ -903,7 +906,7 @@ export function recibirOfertaMedia(deUserId: string, sdp: any, mediaType: 'video
     const conn = p2pManager.get(deUserId);
     if (!conn) return;
 
-    (conn as any)._pendingOffer = new RTCSessionDescription(sdp);
+    conn.pendingOffer = new RTCSessionDescription(sdp);
 
     mediaCallState = 'ringing';
     mediaCallType = mediaType;
@@ -920,7 +923,7 @@ export function rechazarLlamadaMedia(targetUserId: string, callbacks: WebRTCCall
     enviarPorDC(targetUserId, 'media-reject', {});
     const conn = p2pManager.get(targetUserId);
     if (conn) {
-        delete (conn as any)._pendingOffer;
+        delete conn.pendingOffer;
     }
     mediaCallState = 'idle';
     mediaCallType = null;
@@ -991,7 +994,7 @@ export function alternarCamara(activo: boolean) {
 /**
  * Procesa los mensajes de media que llegan por DataChannel (desde recibirMensajeP2P)
  */
-export function manejarMensajeMedia(deUserId: string, data: any, callbacks: WebRTCCallbacks) {
+export async function manejarMensajeMedia(deUserId: string, data: any, callbacks: WebRTCCallbacks) {
     const conn = p2pManager.get(deUserId);
     if (!conn) return;
 
@@ -1019,15 +1022,16 @@ export function manejarMensajeMedia(deUserId: string, data: any, callbacks: WebR
             const answerSdp = data.payload?.sdp;
             if (!answerSdp) return;
 
-            conn.pc.setRemoteDescription(new RTCSessionDescription(answerSdp)).then(() => {
+            try {
+                await conn.pc.setRemoteDescription(new RTCSessionDescription(answerSdp));
                 mediaCallState = 'connected';
                 if (callbacks.onMediaCallAccepted) {
                     callbacks.onMediaCallAccepted(deUserId);
                 }
-            }).catch(err => {
+            } catch (err) {
                 console.error('[WebRTC] Error al setRemoteDescription (media-answer):', err);
                 finalizarLlamadaMedia(callbacks);
-            });
+            }
             break;
         }
 
@@ -1119,6 +1123,15 @@ export async function enviarArchivoP2P(targetUserId: string, file: File, callbac
             const start = i * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, buffer.byteLength);
             const chunk = buffer.slice(start, end);
+
+            // Flow control: esperar si el buffer del DataChannel está saturado
+            const conn = p2pManager.get(targetUserId);
+            if (conn?.dc) {
+                while (conn.dc.bufferedAmount > 65536) {
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+            }
+
             if (!enviarChunkPorDC(targetUserId, chunk)) {
                 console.warn(`[WebRTC] Error al enviar chunk ${i}/${chunkCount}`);
                 cancelarTransferencia(targetUserId, fileId);
