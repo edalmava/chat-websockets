@@ -519,11 +519,14 @@ function recibirMensajeP2P(deUserId: string, dataRaw: string, callbacks: WebRTCC
                 }
                 conn.messages.push({ de: conn.displayName, texto: data.payload, time });
                 
+                // Siempre notificar al store para que el mensaje se registre
+                if (callbacks.onP2PMessageReceived) {
+                    callbacks.onP2PMessageReceived(deUserId, conn.displayName, data.payload, time, 'them');
+                }
+                
+                // Solo enviar seen si el chat está activo
                 if (activeP2PUser === deUserId) {
                     enviarPorDC(deUserId, 'seen', { id: data.id });
-                    if (callbacks.onP2PMessageReceived) {
-                        callbacks.onP2PMessageReceived(deUserId, conn.displayName, data.payload, time, 'them');
-                    }
                 } else {
                     conn.unread++;
                     if (callbacks.onP2PUnreadIncremented) {

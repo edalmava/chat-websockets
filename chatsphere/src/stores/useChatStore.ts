@@ -239,8 +239,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((state) => {
         const mensajes = state.p2pMessages[deUserId] || [];
         if (mensajes.length > 0) {
-          const nuevosMensajes = mensajes.map((m, idx) => 
-            idx === mensajes.length - 1 ? { ...m, status: 'read' as const } : m
+          const nuevosMensajes = mensajes.map(m => 
+            m.isSentByMe ? { ...m, status: 'read' as const } : m
           );
           return {
             p2pMessages: { ...state.p2pMessages, [deUserId]: nuevosMensajes }
@@ -302,10 +302,11 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
           return t;
         });
+        const { [deUserId]: _, ...restoReceivingProgress } = state.fileReceivingProgress;
         return {
           p2pMessages: { ...state.p2pMessages, [deUserId]: [...historialActual, msg] },
           p2pThreads: nuevosHilos,
-          fileReceivingProgress: { ...state.fileReceivingProgress, [deUserId]: undefined! },
+          fileReceivingProgress: restoReceivingProgress,
         };
       });
     },
@@ -318,9 +319,10 @@ export const useChatStore = create<ChatState>((set, get) => {
       }));
       if (sent === total) {
         setTimeout(() => {
-          set((state) => ({
-            fileTransferProgress: { ...state.fileTransferProgress, [targetUserId]: undefined! },
-          }));
+          set((state) => {
+            const { [targetUserId]: _, ...resto } = state.fileTransferProgress;
+            return { fileTransferProgress: resto };
+          });
         }, 1000);
       }
     },
@@ -813,18 +815,30 @@ export const useChatStore = create<ChatState>((set, get) => {
         
         webrtcManager.establecerUsuarioP2PActivo(targetUserId);
         
-        // Obtener historial de mensajes de webrtcManager
-        const conn = webrtcManager.obtenerP2PConnections().get(targetUserId);
-        const msgs = conn ? conn.messages.map(m => ({
-          id: String(Math.random()),
-          senderId: m.de === 'Tú' ? 'me' : targetUserId,
-          senderName: m.de,
-          text: m.texto,
-          timestamp: m.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isSentByMe: m.de === 'Tú'
-        })) : [];
-
         set((state) => {
+          // Reconstruir mensajes desde webrtcManager (sin metadata de archivos)
+          const conn = webrtcManager.obtenerP2PConnections().get(targetUserId);
+          const msgsFromWM = conn ? conn.messages.map(m => ({
+            id: String(Math.random()),
+            senderId: m.de === 'Tú' ? 'me' : targetUserId,
+            senderName: m.de,
+            text: m.texto,
+            timestamp: m.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isSentByMe: m.de === 'Tú'
+          })) : [];
+
+          // Preservar mensajes existentes del store (tienen fileUrl/fileType/fileName)
+          const existingMsgs = state.p2pMessages[targetUserId] || [];
+          
+          // Fusionar: partir de los mensajes existentes del store y agregar solo los que faltan
+          // Un mensaje "falta" si no hay otro con el mismo texto + timestamp en el store
+          const existingKeys = new Set(
+            existingMsgs.map(m => `${m.text}||${m.timestamp}`)
+          );
+          const newMsgs = msgsFromWM.filter(m => !existingKeys.has(`${m.text}||${m.timestamp}`));
+          
+          const mergedMsgs = [...existingMsgs, ...newMsgs];
+
           // Limpiar badge unread y asegurar que el hilo esté creado
           const yaExisteHilo = state.p2pThreads.some(t => t.id === targetUserId);
           const nuevosHilos = yaExisteHilo 
@@ -841,7 +855,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
           return {
             activeP2PUserId: targetUserId,
-            p2pMessages: { ...state.p2pMessages, [targetUserId]: msgs },
+            p2pMessages: { ...state.p2pMessages, [targetUserId]: mergedMsgs },
             p2pThreads: nuevosHilos
           };
         });
@@ -1065,9 +1079,10 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     cancelarTransferenciaP2P: (targetUserId, fileId) => {
       webrtcManager.cancelarTransferencia(targetUserId, fileId);
-      set((state) => ({
-        fileTransferProgress: { ...state.fileTransferProgress, [targetUserId]: undefined! },
-      }));
+      set((state) => {
+        const { [targetUserId]: _, ...resto } = state.fileTransferProgress;
+        return { fileTransferProgress: resto };
+      });
     },
 
     marcarVistoP2P: (targetUserId) => {
