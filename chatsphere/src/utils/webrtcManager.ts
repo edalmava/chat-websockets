@@ -10,6 +10,7 @@ export interface P2PConnection {
     unread: number;
     status: string;
     candidateBuffer: any[];
+    connectionId: number;
     typing?: boolean;
     receivingFile?: {
         fileId: string;
@@ -48,6 +49,7 @@ const p2pManager = new Map<string, P2PConnection>();
 const MAX_ICE_CANDIDATES = 50; // Límite de candidatos ICE para evitar DoS por memoria
 const MAX_P2P_CONNECTIONS = 10; // Máximo de conexiones P2P simultáneas por cliente
 const MAX_P2P_MESSAGE_LENGTH = 5000; // Máximo de caracteres por mensaje P2P
+let connectionIdCounter = 0;
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const CHUNK_SIZE = 16 * 1024; // 16KB por chunk
 
@@ -226,6 +228,7 @@ export async function iniciarConexionP2P(targetUserId: string, displayName: stri
 
     const config = await esperarIceConfig();
     const pc = new RTCPeerConnection(config);
+    const connId = ++connectionIdCounter;
 
     const connection: P2PConnection = { 
         pc, 
@@ -234,16 +237,17 @@ export async function iniciarConexionP2P(targetUserId: string, displayName: stri
         messages: [], 
         unread: 0, 
         status: 'Conectando...', 
-        candidateBuffer: [] 
+        candidateBuffer: [],
+        connectionId: connId
     };
     p2pManager.set(targetUserId, connection);
 
-    configurarPC(targetUserId, pc, callbacks);
+    configurarPC(targetUserId, pc, connId, callbacks);
     
     const dc = pc.createDataChannel('chat');
     dc.binaryType = 'arraybuffer';
     connection.dc = dc;
-    configurarDC(targetUserId, dc, callbacks);
+    configurarDC(targetUserId, dc, connId, callbacks);
 
     try {
         const offer = await pc.createOffer();
@@ -260,7 +264,7 @@ export async function iniciarConexionP2P(targetUserId: string, displayName: stri
 /**
  * Configura los eventos del RTCPeerConnection
  */
-function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: WebRTCCallbacks) {
+function configurarPC(targetUserId: string, pc: RTCPeerConnection, connId: number, callbacks: WebRTCCallbacks) {
     pc.onicecandidate = (e) => {
         if (e.candidate && callbacks.onSendSignal) {
             callbacks.onSendSignal(targetUserId, { tipo: 'candidate', candidate: e.candidate });
@@ -269,7 +273,7 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
 
     pc.onconnectionstatechange = () => {
         const conn = p2pManager.get(targetUserId);
-        if (!conn) return;
+        if (!conn || conn.connectionId !== connId) return;
 
         conn.status = pc.connectionState;
 
@@ -297,7 +301,7 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
 
             const timer = setTimeout(() => {
                 const connActual = p2pManager.get(targetUserId);
-                if (connActual && connActual.pc.connectionState !== 'connected') {
+                if (connActual && connActual.connectionId === connId && connActual.pc.connectionState !== 'connected') {
                     cerrarConexionP2P(targetUserId, `${conn.displayName} se ha desconectado`, callbacks);
                 }
                 disconnectedTimers.delete(targetUserId);
@@ -316,10 +320,10 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
 
     pc.ondatachannel = (e) => {
         const conn = p2pManager.get(targetUserId);
-        if (conn) {
+        if (conn && conn.connectionId === connId) {
             conn.dc = e.channel;
             e.channel.binaryType = 'arraybuffer';
-            configurarDC(targetUserId, e.channel, callbacks);
+            configurarDC(targetUserId, e.channel, connId, callbacks);
         }
     };
 
@@ -336,10 +340,10 @@ function configurarPC(targetUserId: string, pc: RTCPeerConnection, callbacks: We
 /**
  * Configura los eventos del DataChannel
  */
-function configurarDC(targetUserId: string, dc: RTCDataChannel, callbacks: WebRTCCallbacks) {
+function configurarDC(targetUserId: string, dc: RTCDataChannel, connId: number, callbacks: WebRTCCallbacks) {
     dc.onopen = () => {
         const conn = p2pManager.get(targetUserId);
-        if (conn) {
+        if (conn && conn.connectionId === connId) {
             conn.status = 'connected';
             if (callbacks.onP2PStatusChanged) {
                 callbacks.onP2PStatusChanged(targetUserId, 'connected', conn.typing);
@@ -351,10 +355,14 @@ function configurarDC(targetUserId: string, dc: RTCDataChannel, callbacks: WebRT
     };
 
     dc.onclose = () => {
+        const conn = p2pManager.get(targetUserId);
+        if (!conn || conn.connectionId !== connId) return;
         cerrarConexionP2P(targetUserId, 'Canal de datos cerrado', callbacks);
     };
 
     dc.onmessage = (e) => {
+        const conn = p2pManager.get(targetUserId);
+        if (!conn || conn.connectionId !== connId) return;
         if (typeof e.data === 'string') {
             recibirMensajeP2P(targetUserId, e.data, callbacks);
         } else if (e.data instanceof ArrayBuffer) {
@@ -378,6 +386,7 @@ export async function manejarSenalWebRTC(de: string, deNombre: string, senal: an
         }
         const config = await esperarIceConfig();
         const pc = new RTCPeerConnection(config);
+        const connId = ++connectionIdCounter;
         const connection: P2PConnection = { 
             pc, 
             dc: null, 
@@ -385,10 +394,11 @@ export async function manejarSenalWebRTC(de: string, deNombre: string, senal: an
             messages: [], 
             unread: 0, 
             status: 'Esperando...', 
-            candidateBuffer: [] 
+            candidateBuffer: [],
+            connectionId: connId
         };
         p2pManager.set(de, connection);
-        configurarPC(de, pc, callbacks);
+        configurarPC(de, pc, connId, callbacks);
 
         if (callbacks.onShowInvitation) {
             callbacks.onShowInvitation(de, deNombre, senal);
