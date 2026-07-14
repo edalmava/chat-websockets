@@ -90,3 +90,74 @@ export async function obtenerToken(): Promise<string | null> {
 export function onCambioEstadoAuth(callback: (event: AuthChangeEvent, session: Session | null) => void) {
     supabaseClient.auth.onAuthStateChange(callback);
 }
+
+/**
+ * Actualiza el nombre público (display_name) en user_metadata
+ */
+export async function actualizarPerfil(displayName: string) {
+    try {
+        const { data, error } = await supabaseClient.auth.updateUser({
+            data: { display_name: displayName.trim() }
+        });
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}
+
+/**
+ * Cambia la contraseña del usuario autenticado
+ * Requiere sesión activa (access_token válido)
+ */
+export async function cambiarContrasena(nuevaContrasena: string) {
+    try {
+        const { data, error } = await supabaseClient.auth.updateUser({
+            password: nuevaContrasena
+        });
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}
+
+/**
+ * Envía email de recuperación de contraseña
+ * redirectTo: URL donde Supabase redirige tras click en email (debe estar en "Redirect URLs" de Supabase Auth)
+ */
+export async function recuperarContrasena(email: string) {
+    try {
+        const { data, error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+            redirectTo: `${window.location.origin}/reset-password`
+        });
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}
+
+/**
+ * Actualiza contraseña tras confirmación por email (token en URL)
+ * Se usa en página dedicada /reset-password
+ */
+export async function confirmarRecuperacionContrasena(nuevaContrasena: string) {
+    try {
+        const { data, error } = await supabaseClient.auth.updateUser({
+            password: nuevaContrasena
+        });
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}
+
+/**
+ * Obtiene usuario actual (para refrescar displayName tras update)
+ */
+export async function obtenerUsuario() {
+    try {
+        const { data, error } = await supabaseClient.auth.getUser();
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}

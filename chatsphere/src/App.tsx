@@ -8,6 +8,8 @@ import ChatSala from './components/ChatSala';
 import ListaSalas from './components/ListaSalas';
 import LlamadaOverlay from './components/LlamadaOverlay';
 import ImageLightbox from './components/ImageLightbox';
+import PerfilUsuario from './components/PerfilUsuario';
+import ResetPassword from './components/ResetPassword';
 
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
@@ -247,8 +249,17 @@ export default function App() {
               }}
             />
           )}
+
+          {currentScreen === 'perfil' && (
+            <PerfilUsuario
+              onBack={() => navigateTo('lista-salas', 'push_back')}
+            />
+          )}
         </motion.div>
       </AnimatePresence>
+
+      {/* Reset Password (standalone page, outside AnimatePresence) */}
+      {currentScreen === 'reset-password' && <ResetPassword />}
 
       {/* Media Call Overlay (sobre cualquier pantalla) */}
       {mediaCallState !== 'idle' && <LlamadaOverlay />}

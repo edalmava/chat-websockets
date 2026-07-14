@@ -162,7 +162,7 @@ export default function ChatSala({
       if (!isNaN(segs) && segs > 0 && segs <= 3600) {
         muteUser(user.userId, segs);
       } else {
-        alert('Ingresa un número entre 1 y 3600');
+        useChatStore.getState().addNotification('warning', 'Ingresa un número entre 1 y 3600');
         return;
       }
     } else if (modalConfig.tipo === 'role') {

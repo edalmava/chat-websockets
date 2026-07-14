@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { useChatStore } from '../stores/useChatStore';
 
 export default function Auth() {
-  const [isLogin, setIsLogin] = useState(true);
+const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -11,9 +11,16 @@ export default function Auth() {
   
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  
+
+  // Forgot password modal
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+
   const login = useChatStore((state) => state.login);
   const register = useChatStore((state) => state.register);
+  const requestPasswordReset = useChatStore((state) => state.requestPasswordReset);
+  const navigateTo = useChatStore((state) => state.navigateTo);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,6 +67,24 @@ export default function Auth() {
       setErrorMsg(e.message || 'Ocurrió un error inesperado.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    if (!forgotEmail.trim()) {
+      setErrorMsg('Introduce tu correo electrónico.');
+      return;
+    }
+    setForgotLoading(true);
+    const res = await requestPasswordReset(forgotEmail.trim());
+    setForgotLoading(false);
+    if (res.success) {
+      setShowForgotPassword(false);
+      setForgotEmail('');
+    } else {
+      setErrorMsg(res.error || 'Error al enviar el correo.');
     }
   };
 
@@ -175,6 +200,15 @@ export default function Auth() {
                 className="w-full bg-[#111113] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-100 placeholder:text-gray-600 focus:border-indigo-500/50 transition-all outline-none"
               />
             </div>
+            {isLogin && (
+              <button
+                type="button"
+                onClick={() => { setShowForgotPassword(true); setForgotEmail(email); }}
+                className="w-full text-right text-xs text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+            )}
           </div>
 
           {!isLogin && (
@@ -213,7 +247,67 @@ export default function Auth() {
             )}
           </button>
         </form>
-      </motion.div>
+      
+      {/* Forgot Password Modal */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" onClick={() => { setShowForgotPassword(false); setForgotEmail(''); }}></div>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="bg-[#111113] border border-white/10 rounded-2xl p-6 max-w-sm w-full relative z-10 shadow-2xl"
+          >
+            <h3 id="forgot-title" className="text-sm font-bold text-white mb-4 font-sans">Recuperar contraseña</h3>
+            <p className="text-xs text-gray-400 mb-6 leading-relaxed font-sans">
+              Introduce tu email y te enviaremos un enlace para restablecer tu contraseña.
+            </p>
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-400 ml-1">Correo electrónico</label>
+                <div className="relative flex items-center">
+                  <span className="material-symbols-outlined absolute left-4 text-gray-500 text-lg">mail</span>
+                  <input
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="ejemplo@correo.com"
+                    className="w-full bg-[#0a0a0b] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-100 placeholder:text-gray-600 focus:border-indigo-500/50 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2.5 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setShowForgotPassword(false); setForgotEmail(''); }}
+                  className="px-4 py-2 rounded-xl border border-white/10 hover:bg-white/5 text-xs font-bold text-gray-400 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {forgotLoading ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Enviando...
+                    </>
+                  ) : (
+                    <span>Enviar enlace</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </motion.div>
     </div>
   );
 }

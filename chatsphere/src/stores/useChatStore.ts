@@ -1,13 +1,25 @@
 import { create } from 'zustand';
 import { Session } from '@supabase/supabase-js';
 import { Screen, Message, Room, ChatThread, RoomUser, CallState } from '../types';
-import * as supabaseClient from '../utils/supabaseClient';
+import { 
+  supabaseClient, 
+  obtenerSesion, 
+  onCambioEstadoAuth, 
+  obtenerToken, 
+  iniciarSesion, 
+  registrarUsuario, 
+  cerrarSesion, 
+  actualizarPerfil, 
+  obtenerUsuario, 
+  cambiarContrasena, 
+  recuperarContrasena 
+} from '../utils/supabaseClient';
 import * as wsManager from '../utils/wsManager';
 import * as webrtcManager from '../utils/webrtcManager';
 
 interface ChatNotification {
   id: string;
-  tipo: 'info' | 'warning' | 'error' | 'invitation' | 'call';
+  tipo: 'info' | 'warning' | 'error' | 'success' | 'invitation' | 'call';
   mensaje: string;
   metadata?: any;
 }
@@ -53,6 +65,9 @@ interface ChatState {
   // Notificaciones Toast
   notifications: ChatNotification[];
 
+  // Perfil - edición
+  isEditingProfile: boolean;
+
   // Acciones
   inicializarChat: () => Promise<void>;
   conectarWS: () => Promise<void>;
@@ -62,6 +77,12 @@ interface ChatState {
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (displayName: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  
+  // Perfil
+  updateProfile: (displayName: string) => Promise<{ success: boolean; error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  setEditingProfile: (editing: boolean) => void;
   
   // Salas / Mensajes Públicos
   joinRoom: (roomCode: string) => void;
@@ -578,6 +599,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     isMuted: false,
     muteDurationRemaining: 0,
+    isEditingProfile: false,
     
     lastOffsets: {},
     
@@ -593,7 +615,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
       try {
         set({ wsInitializing: true });
-        const session = await supabaseClient.obtenerSesion();
+        const session = await obtenerSesion();
         if (session) {
           set({ session });
           await get().conectarWS();
@@ -606,7 +628,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       }
 
       // Escuchar cambios de autenticación
-      supabaseClient.onCambioEstadoAuth((event, session) => {
+      onCambioEstadoAuth((event, session) => {
         const socketState = wsManager.obtenerEstadoSocket();
         
         if (event === 'TOKEN_REFRESHED' && session) {
@@ -626,7 +648,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     // Conectar WebSocket
     conectarWS: async () => {
-      const token = await supabaseClient.obtenerToken();
+      const token = await obtenerToken();
       if (!token) {
         set({ currentScreen: 'auth' });
         return;
@@ -637,11 +659,8 @@ export const useChatStore = create<ChatState>((set, get) => {
       wsManager.conectar(token, {
         onOpen: () => {
           set({ wsStatus: 'connected', wsInitializing: false });
-          if (get().currentUser) {
-            const sala = get().currentRoomCode === 'general' ? 'General' :
-                         get().currentRoomCode === 'tech-hub' ? 'Tech Hub' :
-                         get().currentRoomCode === 'gaming-zone' ? 'Gaming Zone' : 'Creative Corner';
-            get().joinRoom(sala);
+          if (get().currentUser && get().currentRoomCode) {
+            get().joinRoom(get().currentRoomCode);
           }
 
           // Restaurar conexiones P2P que estaban activas antes de la desconexión WS
@@ -706,7 +725,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     // Autenticación
     login: async (email, password) => {
-      const { data, error } = await supabaseClient.iniciarSesion(email, password);
+      const { data, error } = await iniciarSesion(email, password);
       if (error) {
         return { success: false, error: error.message };
       }
@@ -716,7 +735,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     },
 
     register: async (displayName, email, password) => {
-      const { data, error } = await supabaseClient.registrarUsuario(email, password, displayName);
+      const { data, error } = await registrarUsuario(email, password, displayName);
       if (error) {
         return { success: false, error: error.message };
       }
@@ -756,10 +775,58 @@ export const useChatStore = create<ChatState>((set, get) => {
       webrtcManager.cerrarTodasLasConexionesP2P(getWebRTCCallbacks(), true);
       
       try {
-        await supabaseClient.cerrarSesion();
+        await cerrarSesion();
       } catch (err) {
         console.error('Error al cerrar sesión:', err);
       }
+    },
+
+    // --- Auth Extensions ---
+    updateProfile: async (displayName) => {
+      const { error } = await actualizarPerfil(displayName);
+      if (error) return { success: false, error: error.message };
+      
+      // Refrescar usuario y actualizar store
+      const { data: userData } = await obtenerUsuario();
+      if (userData?.user) {
+        set((state) => ({
+          currentUser: state.currentUser ? {
+            ...state.currentUser,
+            displayName: userData.user.user_metadata?.display_name || displayName
+          } : null
+        }));
+      }
+      get().addNotification('success', 'Perfil actualizado correctamente');
+      return { success: true };
+    },
+
+    changePassword: async (currentPassword, newPassword) => {
+      // Re-autenticar para validar contraseña actual
+      const email = get().session?.user?.email;
+      if (!email) return { success: false, error: 'No hay sesión activa' };
+      
+      const { error: reauthError } = await supabaseClient.auth.signInWithPassword({
+        email,
+        password: currentPassword
+      });
+      if (reauthError) return { success: false, error: 'Contraseña actual incorrecta' };
+      
+      const { error } = await cambiarContrasena(newPassword);
+      if (error) return { success: false, error: error.message };
+      
+      get().addNotification('success', 'Contraseña cambiada correctamente');
+      return { success: true };
+    },
+
+    requestPasswordReset: async (email) => {
+      const { error } = await recuperarContrasena(email);
+      if (error) return { success: false, error: error.message };
+      get().addNotification('info', 'Si el email existe, recibirás instrucciones para restablecer la contraseña');
+      return { success: true };
+    },
+
+    setEditingProfile: (editing) => {
+      set({ isEditingProfile: editing });
     },
 
     // Acciones de Salas / Mensajes Públicos

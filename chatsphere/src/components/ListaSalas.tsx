@@ -16,6 +16,7 @@ export default function ListaSalas({
   const [searchQuery, setSearchQuery] = useState('');
   const logout = useChatStore((state) => state.logout);
   const currentUser = useChatStore((state) => state.currentUser);
+  const navigateTo = useChatStore((state) => state.navigateTo);
 
   const filteredRooms = rooms.filter((room) =>
     room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -34,7 +35,10 @@ export default function ListaSalas({
       {/* Top App Bar Header */}
       <header className="fixed top-0 left-0 right-0 z-50 h-16 glass-header flex justify-between items-center px-4 shadow-sm select-none">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-white/10 overflow-hidden shadow-inner">
+          <div 
+            onClick={() => navigateTo('perfil', 'push')}
+            className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-white/10 overflow-hidden shadow-inner cursor-pointer hover:bg-slate-700 transition-colors"
+          >
             <span className="material-symbols-outlined text-indigo-400">person</span>
           </div>
           <div>
