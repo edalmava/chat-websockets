@@ -12,6 +12,18 @@ import PerfilUsuario from './components/PerfilUsuario';
 import ResetPassword from './components/ResetPassword';
 import ConfirmEmail from './components/ConfirmEmail';
 
+// Detectar páginas standalone desde la URL (para deep links de email)
+function getInitialScreenFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const type = params.get('type');
+  const code = params.get('code');
+  
+  if (type === 'recovery' && code) return 'reset-password';
+  if ((type === 'signup' || !type) && code) return 'confirm-email';
+  return null;
+}
+
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
   const transitionDirection = useChatStore((state) => state.transitionDirection);
@@ -48,16 +60,32 @@ export default function App() {
   // Image lightbox
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
+  // Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
+  function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
+    const params = new URLSearchParams(window.location.search);
+    const type = params.get('type');
+    const code = params.get('code');
+    if (code && type === 'recovery') return 'reset-password';
+    if (code && (type === 'signup' || !type)) return 'confirm-email';
+    return null;
+  }
+
+  // Inicializar screen desde URL ANTES de inicializar chat (para deep links de email)
+  useEffect(() => {
+    const screenFromUrl = getInitialScreenFromUrl();
+    if (screenFromUrl && currentScreen === 'auth') {
+      navigateTo(screenFromUrl, 'none');
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Inicializar autenticación y sockets — solo una vez al montar
-  // Usamos getState() para evitar que la referencia de la función
-  // figure como dependencia y cause re-ejecuciones no deseadas.
   useEffect(() => {
     useChatStore.getState().inicializarChat();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // Pantalla de carga inicial si la sesión está cargando y no estamos en auth
-  if (!session && currentScreen !== 'auth') {
+  if (!session && currentScreen !== 'auth' && currentScreen !== 'reset-password' && currentScreen !== 'confirm-email') {
     return (
       <div className="w-full min-h-screen bg-[#0a0a0b] flex flex-col items-center justify-center text-white select-none">
         <span className="material-symbols-outlined text-5xl text-indigo-500 animate-spin">sync</span>
