@@ -60,13 +60,15 @@ export default function App() {
   // Image lightbox
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
-  // Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
+// Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
   function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
     const params = new URLSearchParams(window.location.search);
     const type = params.get('type');
     const code = params.get('code');
-    if (code && type === 'recovery') return 'reset-password';
+    const token = params.get('token');
+    if ((code || token) && type === 'recovery') return 'reset-password';
     if (code && (type === 'signup' || !type)) return 'confirm-email';
+    if (token && (type === 'signup' || !type)) return 'confirm-email';
     return null;
   }
 

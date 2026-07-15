@@ -13,42 +13,55 @@ export default function ConfirmEmail() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
     const type = params.get('type');
+    const code = params.get('code');
+    const token = params.get('token');
+    const email = params.get('email');
 
-    if (code && (type === 'signup' || !type)) {
-      // Intercambiar code por sesión (signup o recovery sin type explícito)
-      supabaseClient.auth.exchangeCodeForSession(code)
-        .then(({ error }) => {
-          setCheckingUrl(false);
-          if (error) {
-            if (error.message.includes('expired') || error.message.includes('invalid')) {
-              setError('El enlace de confirmación ha expirado o es inválido. Puedes solicitar uno nuevo.');
-            } else if (error.message.includes('already confirmed') || error.message.includes('already verified')) {
-              setError('El email ya fue confirmado anteriormente.');
-            } else {
-              setError(error.message);
-            }
-          } else {
-            setSuccess(true);
-            addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
-            // Redirigir a salas tras 2s
-            setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
-          }
-        })
-        .catch(() => {
-          setCheckingUrl(false);
-          setError('Error al procesar el enlace de confirmación.');
-        });
-    } else {
-      setCheckingUrl(false);
-      setError('Enlace de confirmación inválido.');
+    async function verifyConfirmLink() {
+      try {
+        if (code && (type === 'signup' || !type)) {
+          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (token && (type === 'signup' || !type) && email) {
+          const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email });
+          if (error) throw error;
+        } else if (token && (type === 'signup' || !type)) {
+          const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email: email || '' });
+          if (error) throw error;
+        } else {
+          const { data: { session } } = await supabaseClient.auth.getSession();
+          if (!session) throw new Error('No session');
+        }
+        setCheckingUrl(false);
+        setSuccess(true);
+        addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
+        setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
+      } catch (err: any) {
+        setCheckingUrl(false);
+        if (err.message.includes('expired') || err.message.includes('invalid')) {
+          setError('El enlace de confirmación ha expirado o es inválido. Puedes solicitar uno nuevo.');
+        } else if (err.message.includes('already confirmed') || err.message.includes('already verified')) {
+          setError('El email ya fue confirmado anteriormente.');
+        } else {
+          setError(err.message || 'Error al procesar el enlace de confirmación.');
+        }
+      }
     }
+
+    verifyConfirmLink();
   }, [navigateTo, addNotification]);
 
   const handleResend = async () => {
     setError('');
-    const email = new URLSearchParams(window.location.search).get('email');
+    const params = new URLSearchParams(window.location.search);
+    let email = params.get('email');
+    
+    if (!email) {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      email = session?.user?.email || null;
+    }
+    
     if (!email) {
       setError('No se pudo obtener el email. Regresa al login.');
       return;

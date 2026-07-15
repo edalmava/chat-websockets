@@ -15,28 +15,40 @@ export default function ResetPassword() {
   const [checkingUrl, setCheckingUrl] = useState(true);
 
   useEffect(() => {
-    // Verificar si hay token de recuperación en la URL
     const params = new URLSearchParams(window.location.search);
     const type = params.get('type');
     const code = params.get('code');
+    const token = params.get('token');
+    const email = params.get('email');
 
-    if (type === 'recovery' && code) {
-      // Intercambiar code por sesión
-      supabaseClient.supabaseClient.auth.exchangeCodeForSession(code)
-        .then(({ error }) => {
-          setCheckingUrl(false);
-          if (error) {
-            setError('El enlace de recuperación ha expirado o es inválido. Solicita uno nuevo.');
+    async function verifyRecoveryLink() {
+      try {
+        if (type === 'recovery') {
+          if (code) {
+            const { error } = await supabaseClient.supabaseClient.auth.exchangeCodeForSession(code);
+            if (error) throw error;
+          } else if (token && email) {
+            const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({ token, type: 'recovery', email });
+            if (error) throw error;
+          } else if (token) {
+            // Fallback: try verifyOtp with email if available
+            const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({ token, type: 'recovery', email: email || '' });
+            if (error) throw error;
+          } else {
+            const { data: { session } } = await supabaseClient.supabaseClient.auth.getSession();
+            if (!session) throw new Error('No session');
           }
-        })
-        .catch(() => {
           setCheckingUrl(false);
-          setError('Error al procesar el enlace de recuperación.');
-        });
-    } else {
-      setCheckingUrl(false);
-      setError('Enlace de recuperación inválido. Accede desde el email recibido.');
+          return;
+        }
+        throw new Error('Invalid type');
+      } catch {
+        setCheckingUrl(false);
+        setError('El enlace de recuperación ha expirado o es inválido. Solicita uno nuevo.');
+      }
     }
+
+    verifyRecoveryLink();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
