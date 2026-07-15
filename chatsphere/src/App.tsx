@@ -10,6 +10,7 @@ import LlamadaOverlay from './components/LlamadaOverlay';
 import ImageLightbox from './components/ImageLightbox';
 import PerfilUsuario from './components/PerfilUsuario';
 import ResetPassword from './components/ResetPassword';
+import ConfirmEmail from './components/ConfirmEmail';
 
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
@@ -258,8 +259,9 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Reset Password (standalone page, outside AnimatePresence) */}
+      {/* Standalone pages (outside AnimatePresence) */}
       {currentScreen === 'reset-password' && <ResetPassword />}
+      {currentScreen === 'confirm-email' && <ConfirmEmail />}
 
       {/* Media Call Overlay (sobre cualquier pantalla) */}
       {mediaCallState !== 'idle' && <LlamadaOverlay />}

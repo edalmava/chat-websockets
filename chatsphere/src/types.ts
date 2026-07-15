@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type Screen = 'mensajes-privados' | 'chat-privado' | 'chat-sala' | 'lista-salas' | 'auth' | 'perfil' | 'reset-password';
+export type Screen = 'mensajes-privados' | 'chat-privado' | 'chat-sala' | 'lista-salas' | 'auth' | 'perfil' | 'reset-password' | 'confirm-email';
 
 export type CallType = 'video' | 'voice';
 export type CallState = 'idle' | 'ringing' | 'calling' | 'connected' | 'ended';
