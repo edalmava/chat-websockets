@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { useChatStore } from '../stores/useChatStore';
 
 export default function Auth() {
-const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -17,9 +17,16 @@ const [isLogin, setIsLogin] = useState(true);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
 
+  // Resend confirmation email modal
+  const [showResendConfirmation, setShowResendConfirmation] = useState(false);
+  const [resendEmail, setResendEmail] = useState('');
+  const [resendLoading, setResendLoading] = useState(false);
+
   const login = useChatStore((state) => state.login);
   const register = useChatStore((state) => state.register);
   const requestPasswordReset = useChatStore((state) => state.requestPasswordReset);
+  const resendEmailConfirmation = useChatStore((state) => state.resendEmailConfirmation);
+  const addNotification = useChatStore((state) => state.addNotification);
   const navigateTo = useChatStore((state) => state.navigateTo);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,9 +65,11 @@ const [isLogin, setIsLogin] = useState(true);
         if (!res.success) {
           setErrorMsg(res.error || 'Error al registrarse.');
         } else {
-          // El registro exitoso inicia sesión o pide confirmación
-          setErrorMsg('Cuenta creada con éxito. Revisa tu correo o inicia sesión.');
+          // Registro exitoso - toast en lugar de mensaje inline
+          addNotification('success', 'Cuenta creada con éxito. Hemos enviado un email de confirmación a tu correo.');
           setIsLogin(true);
+          setDisplayName('');
+          setConfirmPassword('');
         }
       }
     } catch (e: any) {
@@ -85,6 +94,24 @@ const [isLogin, setIsLogin] = useState(true);
       setForgotEmail('');
     } else {
       setErrorMsg(res.error || 'Error al enviar el correo.');
+    }
+  };
+
+  const handleResendConfirmation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    if (!resendEmail.trim()) {
+      setErrorMsg('Introduce tu correo electrónico.');
+      return;
+    }
+    setResendLoading(true);
+    const res = await resendEmailConfirmation(resendEmail.trim());
+    setResendLoading(false);
+    if (res.success) {
+      setShowResendConfirmation(false);
+      setResendEmail('');
+    } else {
+      setErrorMsg(res.error || 'Error al reenviar el correo.');
     }
   };
 
@@ -201,13 +228,22 @@ const [isLogin, setIsLogin] = useState(true);
               />
             </div>
             {isLogin && (
-              <button
-                type="button"
-                onClick={() => { setShowForgotPassword(true); setForgotEmail(email); }}
-                className="w-full text-right text-xs text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
-              >
-                ¿Olvidaste tu contraseña?
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setShowForgotPassword(true); setForgotEmail(email); }}
+                  className="w-full text-right text-xs text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowResendConfirmation(true); setResendEmail(email); }}
+                  className="w-full text-right text-xs text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
+                >
+                  ¿No recibiste el email de confirmación?
+                </button>
+              </>
             )}
           </div>
 
@@ -300,6 +336,66 @@ const [isLogin, setIsLogin] = useState(true);
                     </>
                   ) : (
                     <span>Enviar enlace</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Resend Confirmation Modal */}
+      {showResendConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="resend-title">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" onClick={() => { setShowResendConfirmation(false); setResendEmail(''); }}></div>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="bg-[#111113] border border-white/10 rounded-2xl p-6 max-w-sm w-full relative z-10 shadow-2xl"
+          >
+            <h3 id="resend-title" className="text-sm font-bold text-white mb-4 font-sans">Reenviar confirmación</h3>
+            <p className="text-xs text-gray-400 mb-6 leading-relaxed font-sans">
+              Introduce tu email y te reenviaremos el enlace de confirmación de cuenta.
+            </p>
+            <form onSubmit={handleResendConfirmation} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-400 ml-1">Correo electrónico</label>
+                <div className="relative flex items-center">
+                  <span className="material-symbols-outlined absolute left-4 text-gray-500 text-lg">mail</span>
+                  <input
+                    type="email"
+                    required
+                    value={resendEmail}
+                    onChange={(e) => setResendEmail(e.target.value)}
+                    placeholder="ejemplo@correo.com"
+                    className="w-full bg-[#0a0a0b] border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm text-gray-100 placeholder:text-gray-600 focus:border-indigo-500/50 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2.5 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setShowResendConfirmation(false); setResendEmail(''); }}
+                  className="px-4 py-2 rounded-xl border border-white/10 hover:bg-white/5 text-xs font-bold text-gray-400 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={resendLoading}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {resendLoading ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Enviando...
+                    </>
+                  ) : (
+                    <span>Reenviar</span>
                   )}
                 </button>
               </div>

@@ -161,3 +161,18 @@ export async function obtenerUsuario() {
         return { data: null, error: err };
     }
 }
+
+/**
+ * Reenvía email de confirmación de registro (signup)
+ */
+export async function reenviarConfirmacionEmail(email: string) {
+    try {
+        const { data, error } = await supabaseClient.auth.resend({
+            type: 'signup',
+            email
+        });
+        return { data, error };
+    } catch (err) {
+        return { data: null, error: err };
+    }
+}

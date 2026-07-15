@@ -12,7 +12,8 @@ import {
   actualizarPerfil, 
   obtenerUsuario, 
   cambiarContrasena, 
-  recuperarContrasena 
+  recuperarContrasena,
+  reenviarConfirmacionEmail
 } from '../utils/supabaseClient';
 import * as wsManager from '../utils/wsManager';
 import * as webrtcManager from '../utils/webrtcManager';
@@ -82,6 +83,7 @@ interface ChatState {
   updateProfile: (displayName: string) => Promise<{ success: boolean; error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resendEmailConfirmation: (email: string) => Promise<{ success: boolean; error?: string }>;
   setEditingProfile: (editing: boolean) => void;
   
   // Salas / Mensajes Públicos
@@ -822,6 +824,13 @@ export const useChatStore = create<ChatState>((set, get) => {
       const { error } = await recuperarContrasena(email);
       if (error) return { success: false, error: error.message };
       get().addNotification('info', 'Si el email existe, recibirás instrucciones para restablecer la contraseña');
+      return { success: true };
+    },
+
+    resendEmailConfirmation: async (email) => {
+      const { error } = await reenviarConfirmacionEmail(email);
+      if (error) return { success: false, error: error.message };
+      get().addNotification('info', 'Email de confirmación reenviado. Revisa tu bandeja de entrada.');
       return { success: true };
     },
 

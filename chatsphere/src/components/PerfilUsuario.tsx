@@ -119,7 +119,7 @@ export default function PerfilUsuario() {
       <header className="fixed top-0 left-0 right-0 z-50 h-16 glass-header flex justify-between items-center px-4 select-none shadow-sm">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigateTo('mensajes-privados', 'push_back')}
+            onClick={() => navigateTo('lista-salas', 'push_back')}
             className="active:scale-95 transition-transform duration-200 text-gray-400 hover:bg-white/10 p-2 rounded-full flex items-center justify-center"
           >
             <span className="material-symbols-outlined text-2xl">arrow_back</span>
