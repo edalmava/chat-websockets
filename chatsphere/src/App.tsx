@@ -62,11 +62,17 @@ export default function App() {
 
 // Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
   function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
+    // Verificar hash para reset-password (flujo implícito con token_hash)
+    const hash = window.location.hash.substring(1);
+    const hashParams = new URLSearchParams(hash);
+    if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) {
+      return 'reset-password';
+    }
+    // Verificar search para confirm-email (signup)
     const params = new URLSearchParams(window.location.search);
     const type = params.get('type');
     const code = params.get('code');
     const token = params.get('token');
-    if ((code || token) && type === 'recovery') return 'reset-password';
     if (code && (type === 'signup' || !type)) return 'confirm-email';
     if (token && (type === 'signup' || !type)) return 'confirm-email';
     return null;

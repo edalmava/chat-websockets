@@ -15,33 +15,23 @@ export default function ResetPassword() {
   const [checkingUrl, setCheckingUrl] = useState(true);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const tokenHash = params.get('token_hash');
     const type = params.get('type');
-    const code = params.get('code');
-    const token = params.get('token');
-    const email = params.get('email');
 
     async function verifyRecoveryLink() {
       try {
-        if (type === 'recovery') {
-          if (code) {
-            const { error } = await supabaseClient.supabaseClient.auth.exchangeCodeForSession(code);
-            if (error) throw error;
-          } else if (token && email) {
-            const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({ token, type: 'recovery', email });
-            if (error) throw error;
-          } else if (token) {
-            // Fallback: try verifyOtp with email if available
-            const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({ token, type: 'recovery', email: email || '' });
-            if (error) throw error;
-          } else {
-            const { data: { session } } = await supabaseClient.supabaseClient.auth.getSession();
-            if (!session) throw new Error('No session');
-          }
+        if (type === 'recovery' && tokenHash) {
+          const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery'
+          });
+          if (error) throw error;
           setCheckingUrl(false);
           return;
         }
-        throw new Error('Invalid type');
+        throw new Error('Enlace inválido o expirado');
       } catch {
         setCheckingUrl(false);
         setError('El enlace de recuperación ha expirado o es inválido. Solicita uno nuevo.');
@@ -54,7 +44,7 @@ export default function ResetPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
     if (!newPassword || !confirmPassword) {
       setError('Completa ambos campos');
       return;
@@ -76,7 +66,6 @@ export default function ResetPassword() {
       } else {
         setSuccess(true);
         addNotification('success', 'Contraseña restablecida correctamente');
-        // Redirigir a login tras 2s
         setTimeout(() => navigateTo('auth', 'push'), 2000);
       }
     } catch (err: any) {
@@ -116,7 +105,6 @@ export default function ResetPassword() {
 
   return (
     <div className="relative w-full min-h-screen flex items-center justify-center bg-[#0a0a0b] px-4 overflow-hidden select-none">
-      {/* Decorative Orbs */}
       <div className="absolute top-1/4 -left-32 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
       <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
@@ -126,7 +114,6 @@ export default function ResetPassword() {
         transition={{ duration: 0.5, type: 'spring' }}
         className="w-full max-w-md bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl relative z-10"
       >
-        {/* Title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 mb-4">
             <span className="material-symbols-outlined text-4xl">lock_reset</span>
@@ -139,7 +126,6 @@ export default function ResetPassword() {
           </p>
         </div>
 
-        {/* Error message */}
         {error && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -151,7 +137,6 @@ export default function ResetPassword() {
           </motion.div>
         )}
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-400 ml-1">Nueva contraseña</label>
