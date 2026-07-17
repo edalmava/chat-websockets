@@ -622,11 +622,15 @@ export const useChatStore = create<ChatState>((set, get) => {
           set({ session });
           await get().conectarWS();
         } else {
-          set({ currentScreen: 'auth', wsInitializing: false });
+          const current = get().currentScreen;
+          const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
+          set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });
         }
       } catch (e) {
         console.error('Error al inicializar store:', e);
-        set({ currentScreen: 'auth', wsInitializing: false });
+        const current = get().currentScreen;
+        const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
+        set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });
       }
 
       // Escuchar cambios de autenticación
@@ -652,7 +656,9 @@ export const useChatStore = create<ChatState>((set, get) => {
     conectarWS: async () => {
       const token = await obtenerToken();
       if (!token) {
-        set({ currentScreen: 'auth' });
+        const current = get().currentScreen;
+        const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
+        set({ currentScreen: esPaginaPublica ? current : 'auth' });
         return;
       }
 
@@ -712,7 +718,9 @@ export const useChatStore = create<ChatState>((set, get) => {
         },
         onReconnectionFailed: () => {
           get().addNotification('error', 'No se pudo restablecer la conexión con el servidor de chat.');
-          set({ currentScreen: 'auth' });
+          const current = get().currentScreen;
+          const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
+          set({ currentScreen: esPaginaPublica ? current : 'auth' });
         },
         onMessage: (data) => {
           procesarMensajeServidor(data);
