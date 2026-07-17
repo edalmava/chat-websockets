@@ -12,15 +12,24 @@ import PerfilUsuario from './components/PerfilUsuario';
 import ResetPassword from './components/ResetPassword';
 import ConfirmEmail from './components/ConfirmEmail';
 
-// Detectar páginas standalone desde la URL (para deep links de email)
-function getInitialScreenFromUrl(): string | null {
+// Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
+function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
   if (typeof window === 'undefined') return null;
+  
+  // Verificar hash para reset-password (flujo implícito con token_hash)
+  const hash = window.location.hash.substring(1);
+  const hashParams = new URLSearchParams(hash);
+  if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) {
+    return 'reset-password';
+  }
+  
+  // Verificar search para confirm-email (signup)
   const params = new URLSearchParams(window.location.search);
   const type = params.get('type');
   const code = params.get('code');
-  
-  if (type === 'recovery' && code) return 'reset-password';
-  if ((type === 'signup' || !type) && code) return 'confirm-email';
+  const token = params.get('token');
+  if (code && (type === 'signup' || !type)) return 'confirm-email';
+  if (token && (type === 'signup' || !type)) return 'confirm-email';
   return null;
 }
 
@@ -60,31 +69,11 @@ export default function App() {
   // Image lightbox
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
-// Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
-  function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
-    // Verificar hash para reset-password (flujo implícito con token_hash)
-    const hash = window.location.hash.substring(1);
-    const hashParams = new URLSearchParams(hash);
-    if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) {
-      return 'reset-password';
-    }
-    // Verificar search para confirm-email (signup)
-    const params = new URLSearchParams(window.location.search);
-    const type = params.get('type');
-    const code = params.get('code');
-    const token = params.get('token');
-    if (code && (type === 'signup' || !type)) return 'confirm-email';
-    if (token && (type === 'signup' || !type)) return 'confirm-email';
-    return null;
+  // Verificar deep link ANTES de inicializar chat (síncrono durante render)
+  const screenFromUrl = getInitialScreenFromUrl();
+  if (screenFromUrl && currentScreen === 'auth') {
+    useChatStore.getState().navigateTo(screenFromUrl, 'none');
   }
-
-  // Inicializar screen desde URL ANTES de inicializar chat (para deep links de email)
-  useEffect(() => {
-    const screenFromUrl = getInitialScreenFromUrl();
-    if (screenFromUrl && currentScreen === 'auth') {
-      navigateTo(screenFromUrl, 'none');
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Inicializar autenticación y sockets — solo una vez al montar
   useEffect(() => {
