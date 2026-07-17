@@ -16,14 +16,25 @@ import ConfirmEmail from './components/ConfirmEmail';
 function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
   if (typeof window === 'undefined') return null;
   
-  // Verificar hash para reset-password (flujo implícito con token_hash)
+  // 1. Verificar pathname para reset-password (ruta /reset-password con token_hash en hash)
+  const pathname = window.location.pathname;
+  if (pathname === '/reset-password' || pathname.startsWith('/reset-password/')) {
+    return 'reset-password';
+  }
+  
+  // 2. Verificar pathname para confirm-email (ruta /confirm-email)
+  if (pathname === '/confirm-email' || pathname.startsWith('/confirm-email/')) {
+    return 'confirm-email';
+  }
+  
+  // 3. Verificar hash para reset-password (flujo implícito con token_hash)
   const hash = window.location.hash.substring(1);
   const hashParams = new URLSearchParams(hash);
   if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) {
     return 'reset-password';
   }
   
-  // Verificar search para confirm-email (signup)
+  // 4. Verificar search para confirm-email (signup)
   const params = new URLSearchParams(window.location.search);
   const type = params.get('type');
   const code = params.get('code');
@@ -70,6 +81,7 @@ export default function App() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   // Verificar deep link ANTES de inicializar chat (síncrono durante render)
+  // Detectar tanto pathname como hash/query params
   const screenFromUrl = getInitialScreenFromUrl();
   if (screenFromUrl && currentScreen === 'auth') {
     useChatStore.getState().navigateTo(screenFromUrl, 'none');
