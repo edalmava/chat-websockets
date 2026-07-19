@@ -12,7 +12,7 @@ import PerfilUsuario from './components/PerfilUsuario';
 import ResetPassword from './components/ResetPassword';
 import ConfirmEmail from './components/ConfirmEmail';
 
-// Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
+/* // Detectar screen inicial desde URL (para deep links de email: reset-password, confirm-email)
 function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
   if (typeof window === 'undefined') return null;
   
@@ -42,7 +42,7 @@ function getInitialScreenFromUrl(): 'reset-password' | 'confirm-email' | null {
   if (code && (type === 'signup' || !type)) return 'confirm-email';
   if (token && (type === 'signup' || !type)) return 'confirm-email';
   return null;
-}
+} */
 
 export default function App() {
   const currentScreen = useChatStore((state) => state.currentScreen);
@@ -82,8 +82,8 @@ export default function App() {
 
   // Verificar deep link ANTES de inicializar chat (síncrono durante render)
   // Detectar tanto pathname como hash/query params
-  const screenFromUrl = getInitialScreenFromUrl();
-  /*if (screenFromUrl && currentScreen === 'auth') {
+  /*const screenFromUrl = getInitialScreenFromUrl();
+  if (screenFromUrl && currentScreen === 'auth') {
     useChatStore.getState().navigateTo(screenFromUrl, 'none');
   }*/
 
@@ -238,6 +238,8 @@ export default function App() {
           className="w-full min-h-screen"
         >
           {currentScreen === 'auth' && <Auth />}
+          {currentScreen === 'reset-password' && <ResetPassword />}
+          {currentScreen === 'confirm-email' && <ConfirmEmail />}
 
           {currentScreen === 'mensajes-privados' && (
             <MensajesPrivados
@@ -295,10 +297,6 @@ export default function App() {
           )}
         </motion.div>
       </AnimatePresence>
-
-      {/* Standalone pages (outside AnimatePresence) */}
-      {currentScreen === 'reset-password' && <ResetPassword />}
-      {currentScreen === 'confirm-email' && <ConfirmEmail />}
 
       {/* Media Call Overlay (sobre cualquier pantalla) */}
       {mediaCallState !== 'idle' && <LlamadaOverlay />}

@@ -627,34 +627,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         return;
       }
 
-      const pantallaActual = get().currentScreen;
-      const esPaginaPublica = pantallaActual === 'reset-password' || pantallaActual === 'confirm-email';
-
-      // Si estamos en una pantalla pública (recovery/confirm), no toques sesión ni WS todavía.
-      // Deja que ResetPassword/ConfirmEmail terminen su propio flujo primero.
-      if (esPaginaPublica) return;
-
-      try {
-        set({ wsInitializing: true });
-        const session = await obtenerSesion();
-        if (session) {
-          set({ session });
-          await get().conectarWS();
-        } else {
-          /*const current = get().currentScreen;
-          const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
-          set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });*/
-          set({ currentScreen: 'auth', wsInitializing: false });
-        }
-      } catch (e) {
-        console.error('Error al inicializar store:', e);
-        /*const current = get().currentScreen;
-        const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
-        set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });*/
-        set({ currentScreen: 'auth', wsInitializing: false });
-      }
-
-      // Escuchar cambios de autenticación
+      // Escuchar cambios de autenticación — SIEMPRE, incluso en páginas públicas
       onCambioEstadoAuth((event, session) => {
         const socketState = wsManager.obtenerEstadoSocket();
         
@@ -671,6 +644,27 @@ export const useChatStore = create<ChatState>((set, get) => {
           get().logout();
         }
       });
+
+      const pantallaActual = get().currentScreen;
+      const esPaginaPublica = pantallaActual === 'reset-password' || pantallaActual === 'confirm-email';
+
+      // Si estamos en una pantalla pública (recovery/confirm), no toques sesión ni WS todavía.
+      // Deja que ResetPassword/ConfirmEmail terminen su propio flujo primero.
+      if (esPaginaPublica) return;
+
+      try {
+        set({ wsInitializing: true });
+        const session = await obtenerSesion();
+        if (session) {
+          set({ session });
+          await get().conectarWS();
+        } else {
+          set({ currentScreen: 'auth', wsInitializing: false });
+        }
+      } catch (e) {
+        console.error('Error al inicializar store:', e);
+        set({ currentScreen: 'auth', wsInitializing: false });
+      }
     },
 
     // Conectar WebSocket
@@ -751,6 +745,13 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     // Navegar entre pantallas
     navigateTo: (screen, direction = 'none') => {
+      // Limpiar la URL al salir de páginas públicas para evitar que persista
+      // el pathname /reset-password o /confirm-email en recargas
+      const path = window.location.pathname;
+      if (screen !== 'reset-password' && screen !== 'confirm-email' &&
+          (path.startsWith('/reset-password') || path.startsWith('/confirm-email'))) {
+        window.history.replaceState(null, '', '/');
+      }
       set({ currentScreen: screen, transitionDirection: direction });
     },
 

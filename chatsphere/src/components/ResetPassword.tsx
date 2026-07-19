@@ -22,6 +22,7 @@ export default function ResetPassword() {
 
     async function verifyRecoveryLink() {
       try {
+        // Intento 1: Hash presente → flujo normal con verifyOtp
         if (type === 'recovery' && tokenHash) {
           const { error } = await supabaseClient.supabaseClient.auth.verifyOtp({
             token_hash: tokenHash,
@@ -31,6 +32,14 @@ export default function ResetPassword() {
           setCheckingUrl(false);
           return;
         }
+
+        // Intento 2: El SDK de Supabase ya consumió el hash automáticamente
+        const { data } = await supabaseClient.supabaseClient.auth.getSession();
+        if (data.session) {
+          setCheckingUrl(false);
+          return;
+        }
+
         throw new Error('Enlace inválido o expirado');
       } catch {
         setCheckingUrl(false);
