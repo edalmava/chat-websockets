@@ -102,6 +102,7 @@ export default function PerfilUsuario() {
       setConfirmPassword('');
       setShowPasswordFields(false);
       addNotification('success', 'Contraseña cambiada');
+      navigateTo('lista-salas', 'push_back');
     } else {
       setPasswordError(res.error || 'Error al cambiar contraseña');
     }

@@ -832,20 +832,23 @@ export const useChatStore = create<ChatState>((set, get) => {
       return { success: true };
     },
 
-    changePassword: async (currentPassword, newPassword) => {
-      // Re-autenticar para validar contraseña actual
+    changePassword: async (_currentPassword, newPassword) => {
       const email = get().session?.user?.email;
       if (!email) return { success: false, error: 'No hay sesión activa' };
-      
-      const { error: reauthError } = await supabaseClient.auth.signInWithPassword({
-        email,
-        password: currentPassword
-      });
-      if (reauthError) return { success: false, error: 'Contraseña actual incorrecta' };
-      
+
       const { error } = await cambiarContrasena(newPassword);
       if (error) return { success: false, error: error.message };
-      
+
+      // Refrescar sesión con la nueva contraseña
+      const { error: loginError } = await supabaseClient.auth.signInWithPassword({
+        email,
+        password: newPassword
+      });
+      if (loginError) {
+        get().addNotification('warning', 'Contraseña cambiada. Inicia sesión de nuevo.');
+        return { success: true };
+      }
+
       get().addNotification('success', 'Contraseña cambiada correctamente');
       return { success: true };
     },
