@@ -166,6 +166,18 @@ function limpiarLastOffsets(userId: string) {
   localStorage.removeItem(`${LAST_OFFSETS_KEY_PREFIX}${userId}`);
 }
 
+function getInitialScreen(): Screen {
+  const pathname = window.location.pathname;
+  if (pathname.startsWith('/reset-password')) return 'reset-password';
+  if (pathname.startsWith('/confirm-email')) return 'confirm-email';
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) return 'reset-password';
+  const searchParams = new URLSearchParams(window.location.search);
+  if ((searchParams.get('code') || searchParams.get('token')) &&
+      (searchParams.get('type') === 'signup' || !searchParams.get('type'))) return 'confirm-email';
+  return 'auth';
+}
+
 export const useChatStore = create<ChatState>((set, get) => {
   
   // Helpers para WebRTC Callbacks que actualizan Zustand
@@ -573,7 +585,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
   return {
     // Valores Iniciales
-    currentScreen: 'auth',
+    currentScreen: getInitialScreen(),
     transitionDirection: 'none',
     session: null,
     wsInitializing: false,
@@ -615,6 +627,13 @@ export const useChatStore = create<ChatState>((set, get) => {
         return;
       }
 
+      const pantallaActual = get().currentScreen;
+      const esPaginaPublica = pantallaActual === 'reset-password' || pantallaActual === 'confirm-email';
+
+      // Si estamos en una pantalla pública (recovery/confirm), no toques sesión ni WS todavía.
+      // Deja que ResetPassword/ConfirmEmail terminen su propio flujo primero.
+      if (esPaginaPublica) return;
+
       try {
         set({ wsInitializing: true });
         const session = await obtenerSesion();
@@ -622,15 +641,17 @@ export const useChatStore = create<ChatState>((set, get) => {
           set({ session });
           await get().conectarWS();
         } else {
-          const current = get().currentScreen;
+          /*const current = get().currentScreen;
           const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
-          set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });
+          set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });*/
+          set({ currentScreen: 'auth', wsInitializing: false });
         }
       } catch (e) {
         console.error('Error al inicializar store:', e);
-        const current = get().currentScreen;
+        /*const current = get().currentScreen;
         const esPaginaPublica = current === 'reset-password' || current === 'confirm-email';
-        set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });
+        set({ currentScreen: esPaginaPublica ? current : 'auth', wsInitializing: false });*/
+        set({ currentScreen: 'auth', wsInitializing: false });
       }
 
       // Escuchar cambios de autenticación
