@@ -19,7 +19,8 @@ export async function registrarUsuario(email: string, password: string, displayN
             options: {
                 data: {
                     display_name: displayName.trim()
-                }
+                },
+                emailRedirectTo: `${window.location.origin}/confirm-email`
             }
         });
         return { data, error };
