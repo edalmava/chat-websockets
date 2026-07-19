@@ -83,9 +83,9 @@ export default function App() {
   // Verificar deep link ANTES de inicializar chat (síncrono durante render)
   // Detectar tanto pathname como hash/query params
   const screenFromUrl = getInitialScreenFromUrl();
-  if (screenFromUrl && currentScreen === 'auth') {
+  /*if (screenFromUrl && currentScreen === 'auth') {
     useChatStore.getState().navigateTo(screenFromUrl, 'none');
-  }
+  }*/
 
   // Inicializar autenticación y sockets — solo una vez al montar
   useEffect(() => {
