@@ -12,31 +12,46 @@ export default function ConfirmEmail() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const type = params.get('type');
-    const code = params.get('code');
-    const token = params.get('token');
-    const email = params.get('email');
-
     async function verifyConfirmLink() {
       try {
+        // Intento 1: El SDK de Supabase ya procesó #access_token automáticamente
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+          setCheckingUrl(false);
+          setSuccess(true);
+          addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
+          setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
+          return;
+        }
+
+        // Intento 2: Flujo PKCE — código en query params
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code');
+        const type = searchParams.get('type');
+        if (code && (type === 'signup' || !type)) {
+          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          setCheckingUrl(false);
+          setSuccess(true);
+          addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
+          setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
+          return;
+        }
+
+        // Intento 3: Flujo legacy — token + email en query params
+        const token = searchParams.get('token');
+        const email = searchParams.get('email');
         if (token && email && (type === 'signup' || !type)) {
           const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email });
           if (error) throw error;
-        } else if (code && (type === 'signup' || !type)) {
-          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-        } else if (token && (type === 'signup' || !type)) {
-          const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email: email || '' });
-          if (error) throw error;
-        } else {
-          const { data: { session } } = await supabaseClient.auth.getSession();
-          if (!session) throw new Error('No session');
+          setCheckingUrl(false);
+          setSuccess(true);
+          addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
+          setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
+          return;
         }
-        setCheckingUrl(false);
-        setSuccess(true);
-        addNotification('success', 'Email confirmado correctamente. Iniciando sesión...');
-        setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
+
+        throw new Error('No se encontró un enlace de confirmación válido.');
       } catch (err: any) {
         setCheckingUrl(false);
         if (err.message?.includes('expired') || err.message?.includes('Email link is invalid or has expired')) {
@@ -55,12 +70,12 @@ export default function ConfirmEmail() {
 
   const handleResend = async () => {
     setError('');
-    const params = new URLSearchParams(window.location.search);
-    let email = params.get('email');
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    let email = session?.user?.email || null;
     
     if (!email) {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      email = session?.user?.email || null;
+      const searchParams = new URLSearchParams(window.location.search);
+      email = searchParams.get('email');
     }
     
     if (!email) {

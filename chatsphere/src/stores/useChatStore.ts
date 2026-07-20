@@ -172,6 +172,7 @@ function getInitialScreen(): Screen {
   if (pathname.startsWith('/confirm-email')) return 'confirm-email';
   const hashParams = new URLSearchParams(window.location.hash.substring(1));
   if (hashParams.get('type') === 'recovery' && hashParams.get('token_hash')) return 'reset-password';
+  if (hashParams.get('type') === 'signup' || hashParams.get('access_token')) return 'confirm-email';
   const searchParams = new URLSearchParams(window.location.search);
   if ((searchParams.get('code') || searchParams.get('token')) &&
       (searchParams.get('type') === 'signup' || !searchParams.get('type'))) return 'confirm-email';
@@ -648,22 +649,27 @@ export const useChatStore = create<ChatState>((set, get) => {
       const pantallaActual = get().currentScreen;
       const esPaginaPublica = pantallaActual === 'reset-password' || pantallaActual === 'confirm-email';
 
-      // Si estamos en una pantalla pública (recovery/confirm), no toques sesión ni WS todavía.
-      // Deja que ResetPassword/ConfirmEmail terminen su propio flujo primero.
-      if (esPaginaPublica) return;
+      // Siempre obtener la sesión, incluso en páginas públicas (confirm-email, reset-password)
+      // para que el store tenga el session disponible cuando se navegue a lista-salas.
+      const session = await obtenerSesion();
+      if (session) {
+        set({ session });
+      }
 
-      try {
-        set({ wsInitializing: true });
-        const session = await obtenerSesion();
-        if (session) {
-          set({ session });
-          await get().conectarWS();
-        } else {
+      // Conectar WS solo si no estamos en una página pública.
+      // Deja que ConfirmEmail/ResetPassword terminen su propio flujo primero.
+      if (!esPaginaPublica) {
+        try {
+          set({ wsInitializing: true });
+          if (session) {
+            await get().conectarWS();
+          } else {
+            set({ currentScreen: 'auth', wsInitializing: false });
+          }
+        } catch (e) {
+          console.error('Error al inicializar store:', e);
           set({ currentScreen: 'auth', wsInitializing: false });
         }
-      } catch (e) {
-        console.error('Error al inicializar store:', e);
-        set({ currentScreen: 'auth', wsInitializing: false });
       }
     },
 
