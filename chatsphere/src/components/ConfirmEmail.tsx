@@ -20,11 +20,11 @@ export default function ConfirmEmail() {
 
     async function verifyConfirmLink() {
       try {
-        if (code && (type === 'signup' || !type)) {
-          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-        } else if (token && (type === 'signup' || !type) && email) {
+        if (token && email && (type === 'signup' || !type)) {
           const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email });
+          if (error) throw error;
+        } else if (code && (type === 'signup' || !type)) {
+          const { error } = await supabaseClient.auth.exchangeCodeForSession(code);
           if (error) throw error;
         } else if (token && (type === 'signup' || !type)) {
           const { error } = await supabaseClient.auth.verifyOtp({ token, type: 'signup', email: email || '' });
@@ -39,10 +39,11 @@ export default function ConfirmEmail() {
         setTimeout(() => navigateTo('lista-salas', 'push'), 2000);
       } catch (err: any) {
         setCheckingUrl(false);
-        if (err.message.includes('expired') || err.message.includes('invalid')) {
-          setError('El enlace de confirmación ha expirado o es inválido. Puedes solicitar uno nuevo.');
-        } else if (err.message.includes('already confirmed') || err.message.includes('already verified')) {
+        if (err.message?.includes('expired') || err.message?.includes('Email link is invalid or has expired')) {
+          setError('El enlace de confirmación ha expirado o es inválido.');
+        } else if (err.message?.includes('already confirmed') || err.message?.includes('already verified')) {
           setError('El email ya fue confirmado anteriormente.');
+          setTimeout(() => navigateTo('auth', 'push'), 2000);
         } else {
           setError(err.message || 'Error al procesar el enlace de confirmación.');
         }
@@ -63,7 +64,8 @@ export default function ConfirmEmail() {
     }
     
     if (!email) {
-      setError('No se pudo obtener el email. Regresa al login.');
+      addNotification('info', 'Ve a la pantalla de inicio y usa "¿No recibiste el email de confirmación?"');
+      navigateTo('auth', 'push');
       return;
     }
     try {
