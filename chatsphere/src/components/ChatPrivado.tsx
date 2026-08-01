@@ -161,7 +161,6 @@ export default function ChatPrivado({
     const status = p2pConnectionStatus ? p2pConnectionStatus.toLowerCase() : '';
     if (status === 'connected' || status === 'open') return 'Conectado (P2P)';
     if (status === 'connecting' || status === 'checking') return 'Conectando WebRTC...';
-    if (status === 'reconnecting') return 'Reconectando...';
     return 'Desconectado';
   };
 
@@ -221,8 +220,6 @@ export default function ChatPrivado({
               </div>
               {isConnected ? (
                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#0a0a0b] rounded-full"></div>
-              ) : p2pConnectionStatus === 'reconnecting' ? (
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-amber-500 border-2 border-[#0a0a0b] rounded-full animate-pulse"></div>
               ) : null}
             </div>
             <div>
@@ -231,7 +228,6 @@ export default function ChatPrivado({
                 esLlamadaActiva ? 'text-indigo-400' :
                 p2pTypingStatus ? 'text-indigo-400 animate-pulse' :
                 fileTransferProgress ? 'text-amber-400' :
-                p2pConnectionStatus === 'reconnecting' ? 'text-amber-400 animate-pulse' :
                 isConnected ? 'text-emerald-400' : 'text-gray-500'
               }`}>
                 {getStatusText()}
@@ -283,10 +279,10 @@ export default function ChatPrivado({
           ) : (
             <button
               onClick={() => reconnectP2P(targetUser.id)}
-              disabled={p2pConnectionStatus === 'connecting' || p2pConnectionStatus === 'reconnecting'}
+              disabled={p2pConnectionStatus === 'connecting'}
               className="active:scale-95 transition-transform bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold shadow-md shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className={`material-symbols-outlined text-base ${p2pConnectionStatus === 'connecting' || p2pConnectionStatus === 'reconnecting' ? 'animate-spin' : ''}`}>
+              <span className={`material-symbols-outlined text-base ${p2pConnectionStatus === 'connecting' ? 'animate-spin' : ''}`}>
                 refresh
               </span>
               Reconectar
